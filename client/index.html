@@ -161,6 +161,30 @@
       .fire-btn.held {
         background: rgba(255, 120, 60, 0.7);
       }
+      .stick-base {
+        position: fixed;
+        left: 18px;
+        bottom: 96px;
+        width: 112px;
+        height: 112px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.08);
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .stick-knob {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 48px;
+        height: 48px;
+        margin: -24px 0 0 -24px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.35);
+        pointer-events: none;
+      }
       .script-chip {
         position: fixed;
         right: 20px;

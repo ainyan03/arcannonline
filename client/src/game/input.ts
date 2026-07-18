@@ -40,15 +40,23 @@ export class Keyboard {
       }
     }
     if (ix === 0 && iy === 0) return { x: 0, y: 0 };
-
-    // カメラ前方 (2D) = (-sin yaw, -cos yaw)、右方 = (cos yaw, -sin yaw)
-    const fx = -Math.sin(camYaw);
-    const fy = -Math.cos(camYaw);
-    const rx = Math.cos(camYaw);
-    const ry = -Math.sin(camYaw);
-    const x = fx * iy + rx * ix;
-    const y = fy * iy + ry * ix;
-    const len = Math.hypot(x, y);
-    return { x: x / len, y: y / len };
+    return cameraRelativeDir(ix, iy, camYaw);
   }
+}
+
+/**
+ * 画面基準の入力 (ix: 右+, iy: 前+) を、カメラ yaw 基準のフィールド座標系の
+ * 単位ベクトルへ写像する。仮想スティックとキーボードで共用。
+ */
+export function cameraRelativeDir(ix: number, iy: number, camYaw: number): Vec2 {
+  // カメラ前方 (2D) = (-sin yaw, -cos yaw)、右方 = (cos yaw, -sin yaw)
+  const fx = -Math.sin(camYaw);
+  const fy = -Math.cos(camYaw);
+  const rx = Math.cos(camYaw);
+  const ry = -Math.sin(camYaw);
+  const x = fx * iy + rx * ix;
+  const y = fy * iy + ry * ix;
+  const len = Math.hypot(x, y);
+  if (len < 1e-6) return { x: 0, y: 0 };
+  return { x: x / len, y: y / len };
 }

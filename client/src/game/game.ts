@@ -23,6 +23,7 @@ import { parse } from '../sim/danmaku/parser';
 import { ChatUI } from '../ui/chat';
 import { FireButtonUI } from '../ui/fire-button';
 import { ScriptEditorUI } from '../ui/script-editor';
+import { StickUI } from '../ui/stick';
 import { LocalPlayerSim } from '../sim/local-player';
 import { RemotePlayerSim } from '../sim/remote-player';
 import { BulletView } from '../view3d/bullet-view';
@@ -30,7 +31,7 @@ import { FollowCamera } from '../view3d/camera';
 import { EdgeMarkers, type MarkerTarget } from '../view3d/edge-markers';
 import { PlayerView } from '../view3d/player-view';
 import { createWorld, type World } from '../view3d/world';
-import { Keyboard } from './input';
+import { cameraRelativeDir, Keyboard } from './input';
 
 const SPAWN_RANGE = 30;
 
@@ -77,6 +78,9 @@ export class Game {
   private downY = 0;
   private readonly activePointers = new Set<number>();
   private gestureMulti = false;
+  /** 移動追従中のポインタ (押している位置へ移動し続ける) */
+  private followId: number | null = null;
+  private stickVec: Vec2 | null = null;
   private targetId: string | null = null;
   private readonly targetRing: THREE.Mesh;
   private readonly projTmp = new THREE.Vector3();
@@ -125,6 +129,12 @@ export class Game {
       if (held) this.fire();
     };
     this.fireBtn.onCycleScript = () => this.cycleScript();
+
+    // 仮想スティック (左下): 発射ボタンと同時に使える移動手段
+    const stick = new StickUI(container);
+    stick.onMove = (v) => {
+      this.stickVec = v && Math.hypot(v.x, v.y) > 0.25 ? v : null;
+    };
 
     this.editor = new ScriptEditorUI(container);
     this.editor.onApply = (source) => {
@@ -265,7 +275,12 @@ export class Game {
     this.lastFrame = now;
     const dt = dtMs / 1000;
 
-    if (this.player.update(dt, this.input.moveDir(this.camera.yaw))) {
+    // 移動入力: キーボード > 仮想スティック > タップ地点への自動移動 (sim側)
+    let move = this.input.moveDir(this.camera.yaw);
+    if (move.x === 0 && move.y === 0 && this.stickVec) {
+      move = cameraRelativeDir(this.stickVec.x, this.stickVec.y, this.camera.yaw);
+    }
+    if (this.player.update(dt, move)) {
       this.playerView.sync(this.player.pos.x, this.player.pos.y, this.player.heading);
     }
 
@@ -504,36 +519,51 @@ export class Game {
 
     const dom = this.world.renderer.domElement;
 
-    // シングルタップ (ドラッグ・ピンチと区別した短い単押し):
-    //   プレイヤーに当たればターゲット指定/解除、地面ならその地点へ移動
+    // 1本指 (マウスは左ボタン) = 移動追従:
+    //   押した瞬間からその地点へ移動を始め、ドラッグ中は移動先が指に追従する。
+    //   離しても最後の地点へ向かい続ける (フリック移動)。
+    //   プレイヤーの上で短くタップした場合はターゲット指定/解除。
+    //   2本指になったらカメラ操作 (camera.ts) に譲り、追従を打ち切る。
     dom.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
       this.activePointers.add(e.pointerId);
-      if (this.activePointers.size >= 2) this.gestureMulti = true;
+      if (this.activePointers.size >= 2) {
+        this.gestureMulti = true;
+        this.followId = null;
+        return;
+      }
       this.downAt = performance.now();
       this.downX = e.clientX;
       this.downY = e.clientY;
-    });
-    dom.addEventListener('pointerup', (e) => {
-      this.activePointers.delete(e.pointerId);
-      const wasMulti = this.gestureMulti;
-      if (this.activePointers.size === 0) this.gestureMulti = false;
-      if (wasMulti) return; // ピンチ操作の指離しはタップ扱いしない
-      const dt = performance.now() - this.downAt;
-      const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
-      if (dt > TAP_MS || moved > TAP_PX) return; // ドラッグ視点操作は除外
-      const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
-      if (hit) {
-        this.targetId = this.targetId === hit ? null : hit; // 再タップで解除
-        this.updateHud();
-        return;
-      }
+      // プレイヤーの上ならタップ判定 (pointerup) に委ねる。地面なら即移動開始
+      if (this.pickRemoteAt(e.clientX, e.clientY, container)) return;
+      this.followId = e.pointerId;
       const ground = this.raycastGround(e.clientX, e.clientY, container);
       if (ground) this.player.setTarget(ground.x, ground.y);
     });
-    dom.addEventListener('pointercancel', (e) => {
-      this.activePointers.delete(e.pointerId);
-      if (this.activePointers.size === 0) this.gestureMulti = false;
+    dom.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== this.followId || this.gestureMulti) return;
+      const ground = this.raycastGround(e.clientX, e.clientY, container);
+      if (ground) this.player.setTarget(ground.x, ground.y);
     });
+    const endPointer = (e: PointerEvent) => {
+      this.activePointers.delete(e.pointerId);
+      if (e.pointerId === this.followId) this.followId = null;
+      const wasMulti = this.gestureMulti;
+      if (this.activePointers.size === 0) this.gestureMulti = false;
+      if (wasMulti) return; // ピンチ/回転操作の指離しはタップ扱いしない
+      // プレイヤーへの短いタップ = ターゲット指定/解除
+      const dt = performance.now() - this.downAt;
+      const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
+      if (dt > TAP_MS || moved > TAP_PX) return;
+      const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
+      if (hit) {
+        this.targetId = this.targetId === hit ? null : hit;
+        this.updateHud();
+      }
+    };
+    dom.addEventListener('pointerup', endPointer);
+    dom.addEventListener('pointercancel', endPointer);
   }
 
   /** 発射スクリプトを次へ切り替える (仮想ボタン横のチップ用) */
