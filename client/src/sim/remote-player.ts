@@ -35,6 +35,11 @@ export class RemotePlayerSim {
   /** 最後に state を受信した時刻。無通信ピア (ゴースト) の除去判定に使う */
   lastSeenAt: number;
 
+  /** 最後に受信した生の位置 (補間なし)。弾の発射元の追従などに使う */
+  lastX = 0;
+  lastY = 0;
+  hasPos = false;
+
   private readonly buf: Snapshot[] = [];
   private lastSeq = -1;
   private readonly sampleTmp: RemoteSample = { x: 0, y: 0, h: 0, visible: false };
@@ -50,6 +55,9 @@ export class RemotePlayerSim {
     this.lastSeenAt = now;
     if (msg.seq <= this.lastSeq) return; // 非順序チャネルの追い越し・重複を破棄
     this.lastSeq = msg.seq;
+    this.lastX = msg.x;
+    this.lastY = msg.y;
+    this.hasPos = true;
     this.buf.push({ t: now, x: msg.x, y: msg.y, h: msg.h });
     if (this.buf.length > 60) this.buf.shift();
   }

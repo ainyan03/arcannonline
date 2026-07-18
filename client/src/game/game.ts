@@ -259,11 +259,11 @@ export class Game {
       at: Date.now(),
     };
     this.seenFireIds.add(ev.id);
+    // 発射元は自機の現在位置に追従する (移動しながらの多段発射に対応)
     this.engine.startScript(
       script.source,
       ev.seed,
-      ev.x,
-      ev.y,
+      () => this.player.pos,
       ev.dir,
       this.room.selfId,
     );
@@ -284,11 +284,16 @@ export class Game {
       Math.max(Math.floor((Date.now() - ev.at) / TICK_MS), 0),
       MAX_FIRE_CATCHUP_TICKS,
     );
+    // 発射元は同期済みの相手最新位置に追従する。位置未受信・退室後は
+    // イベントに載っている発射時位置へフォールバック
+    const origin = () => {
+      const sim = this.remotes.get(fromId)?.sim;
+      return sim?.hasPos ? { x: sim.lastX, y: sim.lastY } : { x: ev.x, y: ev.y };
+    };
     this.engine.startScript(
       script.source,
       ev.seed,
-      ev.x,
-      ev.y,
+      origin,
       ev.dir,
       fromId,
       catchup,

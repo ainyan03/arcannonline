@@ -5,6 +5,7 @@ import {
   FIELD_SIZE,
   MAX_BULLETS,
   TICK_RATE,
+  type Vec2,
 } from '../../../../shared/src/protocol';
 import { parse, type Program } from './parser';
 import { mulberry32 } from './rng';
@@ -54,13 +55,14 @@ export class BulletEngine {
 
   /**
    * スクリプトの実行を開始する。
+   * @param origin 発射元の現在位置を返す関数。移動しながらの発射で
+   *   弾の出発点が追従するよう、fire のたびに評価される
    * @param catchupTicks 受信遅延分を過去に遡って再生する tick 数 (ローカル発射は 0)
    */
   startScript(
     source: string,
     seed: number,
-    x: number,
-    y: number,
+    origin: () => Vec2,
     dirRad: number,
     owner: string,
     catchupTicks = 0,
@@ -81,8 +83,10 @@ export class BulletEngine {
       dir: dirRad * RAD_TO_DEG,
       t: 0,
       random: mulberry32(seed),
-      fire: (angleDeg, speed, dur, radius) =>
-        this.spawn(x, y, angleDeg, speed, dur, radius, owner, pendingAdvance),
+      fire: (angleDeg, speed, dur, radius) => {
+        const p = origin();
+        this.spawn(p.x, p.y, angleDeg, speed, dur, radius, owner, pendingAdvance);
+      },
     };
     const run = new ScriptRun(program, ctx);
 
