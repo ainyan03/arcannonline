@@ -1,8 +1,7 @@
-import { joinRoom, selfId } from 'trystero/nostr';
+import { getRelaySockets, joinRoom, selfId } from 'trystero/nostr';
 import {
   APP_ID,
   ROOM_NAME,
-  type ProfilePayload,
   type StatePayload,
 } from '../../../shared/src/protocol';
 
@@ -16,37 +15,62 @@ export class GameRoom {
 
   onPeerJoin?: (id: string) => void;
   onPeerLeave?: (id: string) => void;
-  onProfile?: (id: string, profile: ProfilePayload) => void;
   onState?: (id: string, state: StatePayload) => void;
 
   private readonly room: ReturnType<typeof joinRoom>;
   private readonly sendState: (data: StatePayload) => void;
+  private rxCount = 0;
+  private txCount = 0;
+  private txErrCount = 0;
 
-  constructor(name: string) {
-    this.room = joinRoom({ appId: APP_ID }, ROOM_NAME);
+  constructor() {
+    this.room = joinRoom({ appId: APP_ID }, ROOM_NAME, {
+      onJoinError: (err) =>
+        console.error('[room] join error', JSON.stringify(err)),
+    });
 
-    const profileAction = this.room.makeAction<ProfilePayload>('profile');
     const stateAction = this.room.makeAction<StatePayload>('state');
     this.sendState = (data) => {
-      stateAction.send(data).catch(() => {
-        /* 切断直後の送信失敗は無視 */
+      this.txCount++;
+      stateAction.send(data).catch((err) => {
+        // 切断直後の送信失敗は次の周期で再送されるが、頻度を観測できるようにする
+        this.txErrCount++;
+        if (this.txErrCount % 50 === 1) {
+          console.warn('[room] state send failed', err);
+        }
       });
     };
+    stateAction.onMessage = (data, ctx) => {
+      this.rxCount++;
+      this.onState?.(ctx.peerId, data);
+    };
 
-    profileAction.onMessage = (data, ctx) => this.onProfile?.(ctx.peerId, data);
-    stateAction.onMessage = (data, ctx) => this.onState?.(ctx.peerId, data);
-
-    const profile: ProfilePayload = { name };
     this.room.onPeerJoin = (peerId) => {
-      // 新規ピアへ自分のプロフィールを直接送る（相手側でも同様に送られてくる）
-      profileAction.send(profile, { target: peerId }).catch(() => {});
+      console.debug(`[room] peer join ${peerId}`);
       this.onPeerJoin?.(peerId);
     };
-    this.room.onPeerLeave = (peerId) => this.onPeerLeave?.(peerId);
+    this.room.onPeerLeave = (peerId) => {
+      console.debug(`[room] peer leave ${peerId}`);
+      this.onPeerLeave?.(peerId);
+    };
   }
 
   get peerCount(): number {
     return Object.keys(this.room.getPeers()).length;
+  }
+
+  /** 送受信の統計 (デバッグ用) */
+  get stats(): string {
+    return `tx: ${this.txCount} (err ${this.txErrCount}) rx: ${this.rxCount}`;
+  }
+
+  /** シグナリング用 Nostr リレーの接続状況 "open/total" */
+  get relayStatus(): string {
+    const sockets = Object.values(
+      (getRelaySockets as () => Record<string, WebSocket>)(),
+    );
+    const open = sockets.filter((s) => s.readyState === WebSocket.OPEN).length;
+    return `${open}/${sockets.length}`;
   }
 
   broadcastState(state: StatePayload): void {

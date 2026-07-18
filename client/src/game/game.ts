@@ -19,7 +19,6 @@ export class Game {
   private readonly hud: HTMLElement;
 
   private lastFrame = 0;
-  private stateTimer = 0;
   private hudTimer = 0;
 
   constructor(container: HTMLElement, private readonly name: string) {
@@ -37,16 +36,16 @@ export class Game {
     this.hud.className = 'hud';
     container.appendChild(this.hud);
 
-    this.room = new GameRoom(name);
-    this.room.onProfile = (id, profile) => {
-      if (this.remotes.has(id)) return;
-      const remote = new RemotePlayer(profile.name);
-      this.remotes.set(id, remote);
-      this.world.scene.add(remote.object);
-      this.updateHud();
-    };
+    this.room = new GameRoom();
     this.room.onState = (id, state) => {
-      this.remotes.get(id)?.pushState(state);
+      let remote = this.remotes.get(id);
+      if (!remote) {
+        remote = new RemotePlayer(state.n);
+        this.remotes.set(id, remote);
+        this.world.scene.add(remote.object);
+        this.updateHud();
+      }
+      remote.pushState(state);
     };
     this.room.onPeerLeave = (id) => {
       const remote = this.remotes.get(id);
@@ -73,6 +72,17 @@ export class Game {
       requestAnimationFrame(loop);
     };
     requestAnimationFrame(loop);
+
+    // 状態送信は rAF から独立させる。バックグラウンドタブでは rAF が完全停止
+    // するが、setInterval は (~1Hz に間引かれつつも) 動き続けるため、
+    // 裏に回ったプレイヤーも相手画面から消えない。
+    window.setInterval(() => {
+      if (this.room.peerCount > 0) {
+        this.room.broadcastState(this.player.makeState());
+      }
+      // HUD は rAF (描画) 停止中のバックグラウンドでも最新値を保つ
+      this.updateHud();
+    }, STATE_INTERVAL_MS);
   }
 
   private frame(now: number): void {
@@ -81,12 +91,6 @@ export class Game {
     const dt = dtMs / 1000;
 
     this.player.update(dt, this.input.moveDir(this.camera.yaw));
-
-    this.stateTimer += dtMs;
-    if (this.stateTimer >= STATE_INTERVAL_MS && this.room.peerCount > 0) {
-      this.stateTimer = 0;
-      this.room.broadcastState(this.player.makeState());
-    }
 
     for (const remote of this.remotes.values()) remote.update();
 
@@ -103,6 +107,8 @@ export class Game {
   private updateHud(): void {
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
-      `peers: ${this.room.peerCount}`;
+      `relays: ${this.room.relayStatus}\n` +
+      `peers: ${this.room.peerCount}\n` +
+      `${this.room.stats}`;
   }
 }

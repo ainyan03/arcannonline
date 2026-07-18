@@ -28,8 +28,13 @@ export const ROOM_NAME = 'field-1';
 // P2P メッセージ (trystero action のペイロード)
 // ※ trystero の型制約 (Record 互換) のため interface でなく type で定義する
 
-/** 位置同期 (非同期・高頻度)。h は進行方向 (rad, +x 基準で +y 方向へ正) */
+/**
+ * 位置同期 (非同期・高頻度)。h は進行方向 (rad, +x 基準で +y 方向へ正)。
+ * n (名前) を毎回含めるのは冗長だが、接続直後の一発勝負なハンドシェイク
+ * (相手チャネル未確立で喪失し得る) を避けて確実性を取る。
+ */
 export type StatePayload = {
+  n: string;
   seq: number;
   x: number;
   y: number;
@@ -37,9 +42,6 @@ export type StatePayload = {
   vy: number;
   h: number;
 };
-
-/** 参加時に交換するプロフィール */
-export type ProfilePayload = { name: string };
 
 /** チャット（今後実装）。弾幕の発射イベントも同様に action を追加する */
 export type ChatPayload = { text: string };

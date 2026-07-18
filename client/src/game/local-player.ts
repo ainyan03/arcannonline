@@ -19,7 +19,7 @@ export class LocalPlayer {
   private readonly worldPosTmp = new THREE.Vector3();
   private seq = 0;
 
-  constructor(spawn: Vec2, name: string) {
+  constructor(spawn: Vec2, private readonly name: string) {
     this.pos = { ...spawn };
     this.object = createAvatar(colorFromString(name), name);
     this.syncObject();
@@ -42,6 +42,7 @@ export class LocalPlayer {
 
   makeState(): StatePayload {
     return {
+      n: this.name,
       seq: this.seq++,
       x: this.pos.x,
       y: this.pos.y,

@@ -2,6 +2,15 @@ import { Game } from './game/game';
 import { showJoinOverlay } from './ui/join';
 
 async function boot(): Promise<void> {
+  // trystero (シグナリング) は crypto.subtle を必要とする。
+  // これは HTTPS か localhost でのみ使えるため、欠けている場合は案内を出して止める。
+  if (!globalThis.crypto?.subtle) {
+    document.body.innerHTML =
+      '<p style="color:#fff;font-family:sans-serif;padding:24px">' +
+      'このページは HTTPS (または localhost) でアクセスする必要があります。<br>' +
+      `現在のURL: ${location.href}</p>`;
+    return;
+  }
   const name = await showJoinOverlay();
   const game = new Game(document.getElementById('app')!, name);
   game.start();
