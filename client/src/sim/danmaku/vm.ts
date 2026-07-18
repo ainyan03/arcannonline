@@ -15,8 +15,14 @@ export interface ScriptContext {
   t: number;
   /** シード付き乱数 [0,1) */
   random: () => number;
-  /** 弾の生成 */
-  fire: (angleDeg: number, speed: number, dur: number, radius: number) => void;
+  /** 弾の生成。life は残存時間 (秒)。射程で決めたい場合は 射程/速度 を渡す */
+  fire: (
+    angleDeg: number,
+    speed: number,
+    dur: number,
+    radius: number,
+    lifeSec: number,
+  ) => void;
   /** ターゲットへの角度 (deg)。未指定時は dir (評価のたびに再計算される) */
   aim: () => number;
   /** ターゲットまでの距離。未指定時は -1 */
@@ -118,7 +124,13 @@ function callFn(name: string, args: number[], st: RunState): number {
     case 'min': return Math.min(...args);
     case 'max': return Math.max(...args);
     case 'fire': {
-      st.ctx.fire(args[0] ?? 0, args[1] ?? 10, args[2] ?? 1, args[3] ?? 0.4);
+      st.ctx.fire(
+        args[0] ?? 0,
+        args[1] ?? 10,
+        args[2] ?? 1,
+        args[3] ?? 0.4,
+        args[4] ?? 60,
+      );
       return 0;
     }
     default:

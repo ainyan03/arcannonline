@@ -115,11 +115,11 @@ export class BulletEngine {
       dir: dirDeg,
       t: 0,
       random: mulberry32(seed),
-      fire: (angleDeg, speed, dur, radius) => {
+      fire: (angleDeg, speed, dur, radius, lifeSec) => {
         const p = origin();
         this.spawn(
           p.x, p.y, angleDeg, speed, dur, radius, owner, pendingAdvance,
-          fireId, spawnCounter++,
+          fireId, spawnCounter++, lifeSec,
         );
       },
       aim: () => {
@@ -190,8 +190,16 @@ export class BulletEngine {
     advanceTicks: number,
     fireId: string,
     spawnIdx: number,
+    lifeSec = 60,
   ): void {
     if (this.alive >= this.maxBullets) return;
+    // 残存時間 (追いつき再生で既に寿命切れの弾は生成しない)
+    const lifeTicks = Math.min(
+      Math.max(Math.round(lifeSec * TICK_RATE), 1),
+      BULLET_TTL_TICKS,
+    );
+    const ttl = lifeTicks - advanceTicks;
+    if (ttl <= 0) return;
     const a = angleDeg * DEG_TO_RAD;
     const spd = Math.min(Math.max(speed, 0), 60);
     const vx = Math.cos(a) * spd;
@@ -205,7 +213,7 @@ export class BulletEngine {
       dur: Math.min(Math.max(dur, 1), 1000),
       radius: Math.min(Math.max(radius, 0.1), 0.9),
       owner,
-      ttl: BULLET_TTL_TICKS - advanceTicks,
+      ttl,
       fireId,
       spawnIdx,
     };
