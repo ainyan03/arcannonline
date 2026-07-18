@@ -40,6 +40,21 @@ export const STALE_PRESENCE_MS = 60_000;
 /** 接続確立がこの時間を超えて完了しないピアは作り直す */
 export const CONNECT_TIMEOUT_MS = 45_000;
 
+// --- 弾幕シミュレーション -----------------------------------------------
+
+/** シミュレーションの固定タイムステップ (tick/秒) */
+export const TICK_RATE = 60;
+export const TICK_MS = 1000 / TICK_RATE;
+
+/** 全体の同時弾数上限 (超過分の発射は捨てる) */
+export const MAX_BULLETS = 8192;
+
+/** 発射のクールダウン */
+export const FIRE_COOLDOWN_MS = 400;
+
+/** 受信した発射イベントを過去に遡って再生する上限 (tick) */
+export const MAX_FIRE_CATCHUP_TICKS = TICK_RATE * 5;
+
 /** ブートストラップ用の公開 Nostr リレー */
 export const NOSTR_RELAYS = [
   'wss://relay.damus.io',
@@ -105,8 +120,26 @@ export type StatePayload = {
   h: number;
 };
 
-/** 信頼チャネルのメッセージ。チャット・弾幕発射イベントも今後ここに追加する */
+/**
+ * 弾幕の発射イベント。弾の座標は送らず、スクリプトIDとシードだけを同期して
+ * 各クライアントが決定論的に再現演算する。at (epoch ms) から受信側が
+ * 経過 tick を計算して追いつき再生する。
+ */
+export interface FireEvent {
+  id: string;
+  script: string;
+  seed: number;
+  x: number;
+  y: number;
+  /** 発射時の向き (rad) */
+  dir: number;
+  /** 発射時刻 (epoch ms) */
+  at: number;
+}
+
+/** 信頼チャネルのメッセージ。チャットも今後ここに追加する */
 export type ReliableMessage =
   | { type: 'pex'; peers: string[] }
   | { type: 'sig'; env: SignalEnvelope }
+  | { type: 'fire'; ev: FireEvent }
   | { type: 'chat'; text: string };

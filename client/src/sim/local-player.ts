@@ -18,6 +18,7 @@ export class LocalPlayerSim {
 
   private readonly vel: Vec2 = { x: 0, y: 0 };
   private seq = 0;
+  private target: Vec2 | null = null;
 
   constructor(
     spawn: Vec2,
@@ -26,14 +27,37 @@ export class LocalPlayerSim {
     this.pos = { ...spawn };
   }
 
+  /** 指定地点への自動移動を開始する (キー入力があると解除される) */
+  setTarget(x: number, y: number): void {
+    this.target = {
+      x: clamp(x, -BOUND, BOUND),
+      y: clamp(y, -BOUND, BOUND),
+    };
+  }
+
   /** @returns 位置または向きが変化したか */
   update(dt: number, move: Vec2): boolean {
-    this.vel.x = move.x * PLAYER_SPEED;
-    this.vel.y = move.y * PLAYER_SPEED;
-    if (move.x === 0 && move.y === 0) return false;
+    let mx = move.x;
+    let my = move.y;
+    if (mx !== 0 || my !== 0) {
+      this.target = null; // キー入力を優先し自動移動を解除
+    } else if (this.target) {
+      const dx = this.target.x - this.pos.x;
+      const dy = this.target.y - this.pos.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 0.3) {
+        this.target = null;
+      } else {
+        mx = dx / d;
+        my = dy / d;
+      }
+    }
+    this.vel.x = mx * PLAYER_SPEED;
+    this.vel.y = my * PLAYER_SPEED;
+    if (mx === 0 && my === 0) return false;
     this.pos.x = clamp(this.pos.x + this.vel.x * dt, -BOUND, BOUND);
     this.pos.y = clamp(this.pos.y + this.vel.y * dt, -BOUND, BOUND);
-    this.heading = Math.atan2(move.y, move.x);
+    this.heading = Math.atan2(my, mx);
     return true;
   }
 

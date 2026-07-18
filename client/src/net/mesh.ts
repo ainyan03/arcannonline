@@ -10,6 +10,7 @@ import {
   PEX_INTERVAL_MS,
   PRESENCE_INTERVAL_MS,
   STALE_PRESENCE_MS,
+  type FireEvent,
   type NostrContent,
   type ReliableMessage,
   type SignalEnvelope,
@@ -36,6 +37,7 @@ export class Mesh {
   onPeerOpen?: (id: string) => void;
   onPeerClose?: (id: string) => void;
   onState?: (id: string, state: StatePayload) => void;
+  onFire?: (id: string, ev: FireEvent) => void;
 
   private readonly peers = new Map<string, PeerEntry>();
   private readonly presenceSeen = new Map<string, number>();
@@ -73,6 +75,12 @@ export class Mesh {
     this.txCount++;
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendState(state);
+    }
+  }
+
+  broadcastFire(ev: FireEvent): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'fire', ev });
     }
   }
 
@@ -229,6 +237,9 @@ export class Mesh {
         }
         break;
       }
+      case 'fire':
+        this.onFire?.(fromId, msg.ev);
+        break;
       case 'chat':
         // チャット UI は今後実装
         break;

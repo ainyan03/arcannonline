@@ -2,6 +2,7 @@ import {
   APP_ID,
   NOSTR_RELAYS,
   ROOM_NAME,
+  type FireEvent,
   type StatePayload,
 } from '../../../shared/src/protocol';
 import { Mesh } from './mesh';
@@ -36,6 +37,10 @@ export class GameRoom {
     this.mesh.onState = fn;
   }
 
+  set onFire(fn: ((id: string, ev: FireEvent) => void) | undefined) {
+    this.mesh.onFire = fn;
+  }
+
   get peerCount(): number {
     return this.mesh.openCount;
   }
@@ -52,6 +57,10 @@ export class GameRoom {
 
   broadcastState(state: StatePayload): void {
     this.mesh.broadcastState(state);
+  }
+
+  broadcastFire(ev: FireEvent): void {
+    this.mesh.broadcastFire(ev);
   }
 
   /** 回復要求: リレー再接続とプレゼンス再発行 (ウォッチドッグから呼ばれる) */
