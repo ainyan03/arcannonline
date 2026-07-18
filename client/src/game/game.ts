@@ -21,6 +21,8 @@ export class Game {
   private lastFrame = 0;
   private hudTimer = 0;
   private lastSentAt = 0;
+  private lastPeerAt = performance.now();
+  private rejoinBackoffMs = 20_000;
 
   constructor(container: HTMLElement, private readonly name: string) {
     this.world = createWorld(container);
@@ -91,6 +93,26 @@ export class Game {
       // HUD は rAF (描画) 停止中のバックグラウンドでも最新値を保つ
       this.updateHud();
     }, STATE_INTERVAL_MS);
+
+    // 回復ウォッチドッグ: ピアを長時間発見できない場合はルームへ入り直す。
+    // リレーの不調・レート制限・ゴーストピアからの自動回復手段
+    // (間隔は指数バックオフで最大5分まで延ばし、リレーへの負荷増を防ぐ)
+    window.setInterval(() => {
+      if (this.room.peerCount > 0) {
+        this.lastPeerAt = performance.now();
+        this.rejoinBackoffMs = 20_000;
+        return;
+      }
+      if (performance.now() - this.lastPeerAt > this.rejoinBackoffMs) {
+        this.lastPeerAt = performance.now();
+        this.rejoinBackoffMs = Math.min(this.rejoinBackoffMs * 2, 300_000);
+        for (const remote of this.remotes.values()) {
+          this.world.scene.remove(remote.object);
+        }
+        this.remotes.clear();
+        this.room.rejoin();
+      }
+    }, 5_000);
   }
 
   private frame(now: number): void {
