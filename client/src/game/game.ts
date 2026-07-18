@@ -18,6 +18,7 @@ import {
 } from '../../../shared/src/protocol';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
+import { benchEngine } from '../sim/danmaku/bench';
 import { BulletEngine } from '../sim/danmaku/engine';
 import { parse } from '../sim/danmaku/parser';
 import { ChatUI } from '../ui/chat';
@@ -72,6 +73,8 @@ export class Game {
 
   private lastFrame = 0;
   private hudTimer = 0;
+  private fpsFrames = 0;
+  private fps = 0;
   private lastSentAt = 0;
   private lastPeerAt = performance.now();
   private rejoinBackoffMs = 20_000;
@@ -106,7 +109,10 @@ export class Game {
   constructor(container: HTMLElement, private readonly name: string) {
     this.world = createWorld(container);
     this.camera = new FollowCamera(this.world.renderer.domElement);
-    this.bulletView = new BulletView(this.world.scene);
+    this.bulletView = new BulletView(
+      this.world.scene,
+      (owner) => this.remotes.get(owner)?.sim.name ?? owner,
+    );
     this.markers = new EdgeMarkers(container);
 
     const spawn: Vec2 = {
@@ -238,6 +244,7 @@ export class Game {
 
     // 開発時のコンソール調査用ハンドル (本体ロジックからは参照しない)
     (window as unknown as { __blt?: unknown }).__blt = this;
+    (window as unknown as { __bltBench?: unknown }).__bltBench = benchEngine;
   }
 
   start(): void {
@@ -330,8 +337,11 @@ export class Game {
     this.world.renderer.render(this.world.scene, this.camera.camera);
     this.markers.update(this.camera.camera, this.markerTargets);
 
+    this.fpsFrames++;
     this.hudTimer += dtMs;
     if (this.hudTimer >= 500) {
+      this.fps = Math.round((this.fpsFrames * 1000) / this.hudTimer);
+      this.fpsFrames = 0;
       this.hudTimer = 0;
       this.updateHud();
     }
@@ -715,7 +725,7 @@ export class Game {
       `peers: ${this.room.peerCount}\n` +
       `ice: ${iceSummary()}\n` +
       `${this.room.stats}\n` +
-      `bullets: ${this.engine.aliveCount}\n` +
+      `bullets: ${this.engine.aliveCount} fps: ${this.fps}\n` +
       `[Space]発射 [1-5]切替: ${scriptName}\n` +
       `[Enter]チャット [E]スクリプト編集\n` +
       `target: ${targetName}`;

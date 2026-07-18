@@ -49,6 +49,28 @@ export class BulletEngine {
   private alive = 0;
   private freeSlots: number[] = [];
 
+  constructor(private readonly maxBullets = MAX_BULLETS) {}
+
+  /** ベンチマーク用: ランダムな弾を大量投入する (ゲーム本体では使わない) */
+  debugFill(count: number, seed = 1, owners = 4): void {
+    const rng = mulberry32(seed);
+    for (let i = 0; i < count; i++) {
+      const angle = rng() * 360;
+      this.spawn(
+        (rng() * 2 - 1) * 80,
+        (rng() * 2 - 1) * 80,
+        angle,
+        3 + rng() * 12,
+        1 + Math.floor(rng() * 3),
+        0.3 + rng() * 0.3,
+        `bench${i % owners}`,
+        0,
+        'bench',
+        i,
+      );
+    }
+  }
+
   get aliveCount(): number {
     return this.alive;
   }
@@ -169,7 +191,7 @@ export class BulletEngine {
     fireId: string,
     spawnIdx: number,
   ): void {
-    if (this.alive >= MAX_BULLETS) return;
+    if (this.alive >= this.maxBullets) return;
     const a = angleDeg * DEG_TO_RAD;
     const spd = Math.min(Math.max(speed, 0), 60);
     const vx = Math.cos(a) * spd;

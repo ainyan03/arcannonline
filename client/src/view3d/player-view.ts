@@ -29,6 +29,19 @@ export class PlayerView {
     this.object.add(this.body);
     this.object.add(createNameSprite(name));
 
+    // 足元の影 (接地感を出す)
+    const shadow = new THREE.Mesh(
+      new THREE.CircleGeometry(0.55, 24),
+      new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.28,
+      }),
+    );
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.04;
+    this.object.add(shadow);
+
     // 頭上のHPバー。複数スプライトを重ねるとカメラ角度で相対位置が
     // ずれるため、1枚のスプライトに Canvas でバーを描き込む
     this.hpCanvas = document.createElement('canvas');
