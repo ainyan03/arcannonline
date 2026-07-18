@@ -25,7 +25,10 @@ export class PlayerView {
       new THREE.SpriteMaterial({ color: 0x44dd44, depthTest: false }),
     );
     this.hpBar.scale.set(1.8, 0.1, 1);
-    this.hpBar.position.y = 2.15;
+    // 左端を基準にスケールさせ、減少時に右から左へ縮むようにする
+    // (既定の center=(0.5,0.5) だと両端から中央へ縮んで見える)
+    this.hpBar.center.set(0, 0.5);
+    this.hpBar.position.set(-0.9, 2.15, 0.001);
     this.object.add(this.hpBar);
   }
 
