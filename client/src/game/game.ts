@@ -1,5 +1,6 @@
 import { STATE_INTERVAL_MS, type Vec2 } from '../../../shared/src/protocol';
 import { GameRoom } from '../net/room';
+import { iceSummary } from '../net/rtc-debug';
 import { FollowCamera } from './camera';
 import { Keyboard } from './input';
 import { LocalPlayer } from './local-player';
@@ -145,6 +146,7 @@ export class Game {
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
       `relays: ${this.room.relayStatus}\n` +
       `peers: ${this.room.peerCount}\n` +
+      `ice: ${iceSummary()}\n` +
       `${this.room.stats}`;
   }
 }

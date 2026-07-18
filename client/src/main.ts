@@ -1,5 +1,8 @@
 import { Game } from './game/game';
+import { installRtcDebug } from './net/rtc-debug';
 import { showJoinOverlay } from './ui/join';
+
+installRtcDebug();
 
 async function boot(): Promise<void> {
   // trystero (シグナリング) は crypto.subtle を必要とする。
