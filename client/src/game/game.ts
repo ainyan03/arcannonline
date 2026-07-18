@@ -42,6 +42,12 @@ const STALE_REMOTE_MS = 10_000;
 const TAP_MS = 400;
 const TAP_PX = 6;
 
+/**
+ * タッチの移動入力を確定するまでの猶予。2本指操作は着地タイミングが
+ * わずかにずれるため、1本目に即反応すると意図しない移動が発生する
+ */
+const TOUCH_GRACE_MS = 120;
+
 interface Remote {
   sim: RemotePlayerSim;
   view: PlayerView;
@@ -80,6 +86,13 @@ export class Game {
   private gestureMulti = false;
   /** 移動追従中のポインタ (押している位置へ移動し続ける) */
   private followId: number | null = null;
+  /** 猶予期間中の移動入力候補 (2本目の指が来たら破棄する) */
+  private pendingFollow: {
+    id: number;
+    x: number;
+    y: number;
+    timer: number;
+  } | null = null;
   private stickVec: Vec2 | null = null;
   private targetId: string | null = null;
   private readonly targetRing: THREE.Mesh;
@@ -528,26 +541,56 @@ export class Game {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       this.activePointers.add(e.pointerId);
       if (this.activePointers.size >= 2) {
+        // 2本指: カメラ操作へ。移動入力 (確定済み・猶予中とも) は破棄する
         this.gestureMulti = true;
         this.followId = null;
+        this.cancelPendingFollow();
         return;
       }
       this.downAt = performance.now();
       this.downX = e.clientX;
       this.downY = e.clientY;
-      // プレイヤーの上ならタップ判定 (pointerup) に委ねる。地面なら即移動開始
+      // プレイヤーの上ならタップ判定 (pointerup) に委ねる
       if (this.pickRemoteAt(e.clientX, e.clientY, container)) return;
-      this.followId = e.pointerId;
-      const ground = this.raycastGround(e.clientX, e.clientY, container);
-      if (ground) this.player.setTarget(ground.x, ground.y);
+      if (e.pointerType === 'touch') {
+        // タッチは猶予期間を置いてから移動を確定する (2本指操作の誤発動防止)
+        this.cancelPendingFollow();
+        const pending = {
+          id: e.pointerId,
+          x: e.clientX,
+          y: e.clientY,
+          timer: 0,
+        };
+        pending.timer = window.setTimeout(() => {
+          if (this.pendingFollow !== pending) return;
+          this.pendingFollow = null;
+          if (this.gestureMulti || !this.activePointers.has(pending.id)) return;
+          this.followId = pending.id;
+          const ground = this.raycastGround(pending.x, pending.y, container);
+          if (ground) this.player.setTarget(ground.x, ground.y);
+        }, TOUCH_GRACE_MS);
+        this.pendingFollow = pending;
+      } else {
+        // マウスは多点タッチがないため即時確定
+        this.followId = e.pointerId;
+        const ground = this.raycastGround(e.clientX, e.clientY, container);
+        if (ground) this.player.setTarget(ground.x, ground.y);
+      }
     });
     dom.addEventListener('pointermove', (e) => {
+      if (this.pendingFollow?.id === e.pointerId) {
+        this.pendingFollow.x = e.clientX;
+        this.pendingFollow.y = e.clientY;
+        return;
+      }
       if (e.pointerId !== this.followId || this.gestureMulti) return;
       const ground = this.raycastGround(e.clientX, e.clientY, container);
       if (ground) this.player.setTarget(ground.x, ground.y);
     });
     const endPointer = (e: PointerEvent) => {
       this.activePointers.delete(e.pointerId);
+      const wasPending = this.pendingFollow?.id === e.pointerId;
+      if (wasPending) this.cancelPendingFollow();
       if (e.pointerId === this.followId) this.followId = null;
       const wasMulti = this.gestureMulti;
       if (this.activePointers.size === 0) this.gestureMulti = false;
@@ -555,15 +598,29 @@ export class Game {
       // プレイヤーへの短いタップ = ターゲット指定/解除
       const dt = performance.now() - this.downAt;
       const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
-      if (dt > TAP_MS || moved > TAP_PX) return;
-      const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
-      if (hit) {
-        this.targetId = this.targetId === hit ? null : hit;
-        this.updateHud();
+      if (dt <= TAP_MS && moved <= TAP_PX) {
+        const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
+        if (hit) {
+          this.targetId = this.targetId === hit ? null : hit;
+          this.updateHud();
+          return;
+        }
+      }
+      // 猶予中に離した = クイックタップ/フリック。移動として成立させる
+      if (wasPending && e.type === 'pointerup') {
+        const ground = this.raycastGround(e.clientX, e.clientY, container);
+        if (ground) this.player.setTarget(ground.x, ground.y);
       }
     };
     dom.addEventListener('pointerup', endPointer);
     dom.addEventListener('pointercancel', endPointer);
+  }
+
+  private cancelPendingFollow(): void {
+    if (this.pendingFollow) {
+      clearTimeout(this.pendingFollow.timer);
+      this.pendingFollow = null;
+    }
   }
 
   /** 発射スクリプトを次へ切り替える (仮想ボタン横のチップ用) */
