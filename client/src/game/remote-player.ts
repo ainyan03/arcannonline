@@ -26,12 +26,16 @@ export class RemotePlayer {
   private readonly buf: Snapshot[] = [];
   private lastSeq = -1;
 
+  /** 最後に state を受信した時刻。無通信ピア (ゴースト) の除去判定に使う */
+  lastSeenAt = performance.now();
+
   constructor(readonly name: string) {
     this.object = createAvatar(colorFromString(name), name);
     this.object.visible = false; // 最初の状態受信まで位置が不明なので隠す
   }
 
   pushState(msg: StatePayload): void {
+    this.lastSeenAt = performance.now();
     if (msg.seq <= this.lastSeq) return; // 追い越し・重複を破棄
     this.lastSeq = msg.seq;
     this.buf.push({ t: performance.now(), x: msg.x, y: msg.y, h: msg.h });

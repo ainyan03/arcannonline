@@ -1,7 +1,16 @@
 const NAME_KEY = 'blt-name';
+const AUTOJOIN_KEY = 'blt-autojoin';
 
-/** 参加オーバーレイを表示し、決定されたプレイヤー名を返す。 */
+/**
+ * 参加オーバーレイを表示し、決定されたプレイヤー名を返す。
+ * 一度参加したタブが再読み込みされた場合 (スマホの画面ロック復帰等) は、
+ * オーバーレイを出さずに保存済みの名前で即時再参加する。
+ */
 export function showJoinOverlay(): Promise<string> {
+  const savedName = localStorage.getItem(NAME_KEY);
+  if (sessionStorage.getItem(AUTOJOIN_KEY) && savedName) {
+    return Promise.resolve(savedName);
+  }
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
@@ -26,6 +35,7 @@ export function showJoinOverlay(): Promise<string> {
     const submit = () => {
       const name = input.value.trim().slice(0, 16) || 'noname';
       localStorage.setItem(NAME_KEY, name);
+      sessionStorage.setItem(AUTOJOIN_KEY, '1');
       overlay.remove();
       resolve(name);
     };

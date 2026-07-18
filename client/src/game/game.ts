@@ -9,6 +9,9 @@ import { createWorld, type World } from './world';
 
 const SPAWN_RANGE = 30;
 
+/** この時間 state を受信しないリモートはゴーストとみなして除去する */
+const STALE_REMOTE_MS = 10_000;
+
 /** ゲーム全体のオーケストレーション: 描画ループ・入力・ネットワーク送受信。 */
 export class Game {
   private readonly world: World;
@@ -73,7 +76,15 @@ export class Game {
       this.world.renderer.setSize(window.innerWidth, window.innerHeight);
       this.camera.resize(window.innerWidth / window.innerHeight);
     });
-    window.addEventListener('beforeunload', () => this.room.leave());
+    // beforeunload はモバイルで発火しないことが多い。pagehide なら
+    // 画面ロックやタブ切替による破棄・凍結時にも比較的確実に呼ばれるため、
+    // ここで退室してゴースト (残留ピア情報) を残さないようにする
+    window.addEventListener('pagehide', () => this.room.leave());
+    // bfcache から復元された場合、凍結中に WebRTC もリレー接続も死んでいる
+    // ので、再読み込みしてクリーンに再参加させる (自動参加で即復帰する)
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) location.reload();
+    });
 
     this.updateHud();
   }
@@ -99,6 +110,17 @@ export class Game {
     // リレーの不調・レート制限・ゴーストピアからの自動回復手段
     // (間隔は指数バックオフで最大5分まで延ばし、リレーへの負荷増を防ぐ)
     window.setInterval(() => {
+      // 生きているピアはこちらの送信への応答 (受信駆動 keepalive) が必ず
+      // 1秒以内に返る。長時間無通信のリモートは死んだ接続の残骸とみなして
+      // 除去する (スマホの画面ロック等で leave なしに消えたゴースト対策)
+      for (const [id, remote] of this.remotes) {
+        if (performance.now() - remote.lastSeenAt > STALE_REMOTE_MS) {
+          console.debug(`[game] remove stale remote ${id} (${remote.name})`);
+          this.remotes.delete(id);
+          this.world.scene.remove(remote.object);
+        }
+      }
+
       if (this.room.peerCount > 0) {
         this.lastPeerAt = performance.now();
         this.rejoinBackoffMs = 20_000;
