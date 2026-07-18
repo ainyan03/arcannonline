@@ -315,6 +315,7 @@ export class Game {
     const invuln = now < this.player.invulnUntil;
     this.playerView.object.visible = !invuln || Math.floor(now / 120) % 2 === 0;
     this.playerView.setHp(this.player.hp / MAX_HP);
+    this.playerView.setEnergy(this.player.energy / ENERGY_MAX);
 
     this.markerTargets.clear();
     for (const [id, remote] of this.remotes) {
