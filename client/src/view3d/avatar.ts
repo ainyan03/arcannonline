@@ -28,9 +28,15 @@ export function createNameSprite(name: string): THREE.Sprite {
     new THREE.SpriteMaterial({ map: texture, transparent: true }),
   );
   sprite.scale.set(4, 1, 1);
-  sprite.position.y = 2.6;
+  // HP バーと同じアンカー点から、スクリーン空間で上方向へオフセットする
+  // (ワールドYで離すと真上視点で HP バーと重なるため)
+  sprite.center.set(0.5, 0.25);
+  sprite.position.y = HEAD_ANCHOR_Y;
   return sprite;
 }
+
+/** 名前・HPバー共通のアンカー高さ。オフセットはスクリーン空間で行う */
+export const HEAD_ANCHOR_Y = 2.3;
 
 /**
  * キャラクターの胴体 (カプセル＋進行方向を示すノーズ)。
