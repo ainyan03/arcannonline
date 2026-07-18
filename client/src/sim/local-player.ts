@@ -1,6 +1,8 @@
 // 自機のシミュレーション。描画に依存しない純粋な演算 (2D 座標系)。
 import {
   FIELD_SIZE,
+  INVULN_MS,
+  MAX_HP,
   PLAYER_SPEED,
   type StatePayload,
   type Vec2,
@@ -15,6 +17,9 @@ function clamp(v: number, min: number, max: number): number {
 export class LocalPlayerSim {
   readonly pos: Vec2;
   heading = 0;
+  hp = MAX_HP;
+  /** この時刻まで無敵 (リスポーン直後) */
+  invulnUntil = 0;
 
   private readonly vel: Vec2 = { x: 0, y: 0 };
   private seq = 0;
@@ -25,6 +30,25 @@ export class LocalPlayerSim {
     private readonly name: string,
   ) {
     this.pos = { ...spawn };
+  }
+
+  /**
+   * 被弾処理 (自己申告制: 判定は自分のクライアントだけが行う)。
+   * @returns HP が尽きたか
+   */
+  takeHit(damage: number, now: number): boolean {
+    if (now < this.invulnUntil) return false;
+    this.hp = Math.max(0, this.hp - damage);
+    return this.hp <= 0;
+  }
+
+  /** 指定地点で復活し、しばらく無敵になる */
+  respawn(x: number, y: number, now: number): void {
+    this.pos.x = clamp(x, -BOUND, BOUND);
+    this.pos.y = clamp(y, -BOUND, BOUND);
+    this.hp = MAX_HP;
+    this.invulnUntil = now + INVULN_MS;
+    this.target = null;
   }
 
   /** 指定地点への自動移動を開始する (キー入力があると解除される) */
@@ -66,6 +90,7 @@ export class LocalPlayerSim {
       n: this.name,
       seq: this.seq++,
       ts: Date.now(),
+      hp: this.hp,
       x: this.pos.x,
       y: this.pos.y,
       vx: this.vel.x,

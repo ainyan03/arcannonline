@@ -41,6 +41,10 @@ export class GameRoom {
     this.mesh.onFire = fn;
   }
 
+  set onChat(fn: ((id: string, text: string) => void) | undefined) {
+    this.mesh.onChat = fn;
+  }
+
   get peerCount(): number {
     return this.mesh.openCount;
   }
@@ -61,6 +65,10 @@ export class GameRoom {
 
   broadcastFire(ev: FireEvent): void {
     this.mesh.broadcastFire(ev);
+  }
+
+  broadcastChat(text: string): void {
+    this.mesh.broadcastChat(text);
   }
 
   /** 回復要求: リレー再接続とプレゼンス再発行 (ウォッチドッグから呼ばれる) */

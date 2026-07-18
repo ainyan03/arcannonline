@@ -38,6 +38,7 @@ export class Mesh {
   onPeerClose?: (id: string) => void;
   onState?: (id: string, state: StatePayload) => void;
   onFire?: (id: string, ev: FireEvent) => void;
+  onChat?: (id: string, text: string) => void;
 
   private readonly peers = new Map<string, PeerEntry>();
   private readonly presenceSeen = new Map<string, number>();
@@ -81,6 +82,12 @@ export class Mesh {
   broadcastFire(ev: FireEvent): void {
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendReliable({ type: 'fire', ev });
+    }
+  }
+
+  broadcastChat(text: string): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'chat', text });
     }
   }
 
@@ -241,7 +248,7 @@ export class Mesh {
         this.onFire?.(fromId, msg.ev);
         break;
       case 'chat':
-        // チャット UI は今後実装
+        this.onChat?.(fromId, String(msg.text).slice(0, 200));
         break;
     }
   }

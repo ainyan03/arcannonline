@@ -42,6 +42,96 @@
         color: #ffd24d;
         font-size: 14px;
       }
+      .hitflash {
+        position: fixed;
+        inset: 0;
+        background: rgba(255, 32, 32, 0.28);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.4s;
+      }
+      .hitflash.on {
+        opacity: 1;
+        transition: none;
+      }
+      .chat {
+        position: fixed;
+        left: 8px;
+        bottom: 8px;
+        width: 340px;
+        font: 12px/1.5 sans-serif;
+        color: #fff;
+        text-shadow: 0 1px 2px #000;
+      }
+      .chat-log {
+        pointer-events: none;
+        word-break: break-all;
+      }
+      .chat-log .name {
+        color: #ffd24d;
+      }
+      .chat-log .sys {
+        color: #a8d8ff;
+      }
+      .chat-input {
+        display: none;
+        width: 100%;
+        margin-top: 4px;
+        padding: 6px;
+        font-size: 13px;
+        border: none;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.92);
+        box-sizing: border-box;
+      }
+      .editor {
+        display: none;
+        position: fixed;
+        top: 8px;
+        right: 8px;
+        width: 360px;
+        padding: 12px;
+        background: rgba(20, 30, 40, 0.92);
+        border-radius: 8px;
+        color: #fff;
+        font-family: sans-serif;
+      }
+      .editor .title {
+        font-size: 13px;
+        font-weight: bold;
+        margin-bottom: 6px;
+      }
+      .editor textarea {
+        width: 100%;
+        height: 240px;
+        font: 12px/1.4 monospace;
+        border: none;
+        border-radius: 4px;
+        padding: 6px;
+        box-sizing: border-box;
+        resize: vertical;
+      }
+      .editor .err {
+        color: #ff9999;
+        font: 11px monospace;
+        white-space: pre-wrap;
+        min-height: 14px;
+        margin: 4px 0;
+      }
+      .editor .buttons {
+        display: flex;
+        gap: 8px;
+      }
+      .editor button {
+        flex: 1;
+        padding: 6px;
+        border: none;
+        border-radius: 4px;
+        background: #4a8f5a;
+        color: #fff;
+        cursor: pointer;
+        font-size: 12px;
+      }
       .hud {
         position: fixed;
         top: 8px;

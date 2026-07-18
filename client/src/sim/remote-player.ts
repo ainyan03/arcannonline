@@ -1,6 +1,6 @@
 // リモート機のシミュレーション。描画に依存しない純粋な演算。
 // 受信スナップショットのバッファを遅延再生し、補間済みの姿勢を返す。
-import type { StatePayload } from '../../../shared/src/protocol';
+import { MAX_HP, type StatePayload } from '../../../shared/src/protocol';
 
 /** 受信スナップショットをこの時間だけ遅らせて再生し、補間を効かせる */
 export const INTERP_DELAY_MS = 120;
@@ -40,6 +40,9 @@ export class RemotePlayerSim {
   lastY = 0;
   hasPos = false;
 
+  /** 相手の自己申告HP */
+  hp = MAX_HP;
+
   /**
    * この相手との「時計ずれ + 最小伝送遅延」の推定値 (ms)。
    * (受信時刻 - 送信時刻) の観測最小値。相手の時計が進んでいれば負にもなる。
@@ -66,6 +69,7 @@ export class RemotePlayerSim {
     this.lastX = msg.x;
     this.lastY = msg.y;
     this.hasPos = true;
+    this.hp = msg.hp ?? MAX_HP;
     const skew = Date.now() - msg.ts;
     if (skew < this.clockSkewMin) this.clockSkewMin = skew;
     this.buf.push({ t: now, x: msg.x, y: msg.y, h: msg.h });

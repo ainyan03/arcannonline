@@ -183,6 +183,11 @@ export class BulletEngine {
     this.alive++;
   }
 
+  /** 外部からの弾の消費 (被弾処理など)。index は bullets 配列上の位置 */
+  killAt(index: number): void {
+    this.kill(index);
+  }
+
   private kill(index: number): void {
     const b = this.bullets[index];
     if (!b.alive) return;

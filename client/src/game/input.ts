@@ -17,7 +17,8 @@ export class Keyboard {
 
   constructor() {
     window.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.code in KEYMAP) {
         this.pressed.add(e.code);
         e.preventDefault();

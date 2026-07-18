@@ -9,6 +9,8 @@ import {
 import {
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
+  MAX_HP,
+  MAX_SCRIPT_SRC_LEN,
   STATE_INTERVAL_MS,
   TICK_MS,
   type FireEvent,
@@ -17,6 +19,9 @@ import {
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
 import { BulletEngine } from '../sim/danmaku/engine';
+import { parse } from '../sim/danmaku/parser';
+import { ChatUI } from '../ui/chat';
+import { ScriptEditorUI } from '../ui/script-editor';
 import { LocalPlayerSim } from '../sim/local-player';
 import { RemotePlayerSim } from '../sim/remote-player';
 import { BulletView } from '../view3d/bullet-view';
@@ -74,6 +79,10 @@ export class Game {
   private targetId: string | null = null;
   private readonly targetRing: THREE.Mesh;
   private readonly projTmp = new THREE.Vector3();
+  private readonly chat: ChatUI;
+  private readonly editor: ScriptEditorUI;
+  private readonly hitFlash: HTMLElement;
+  private customSource: string | null = null;
 
   constructor(container: HTMLElement, private readonly name: string) {
     this.world = createWorld(container);
@@ -96,6 +105,35 @@ export class Game {
     this.hud = document.createElement('div');
     this.hud.className = 'hud';
     container.appendChild(this.hud);
+
+    this.hitFlash = document.createElement('div');
+    this.hitFlash.className = 'hitflash';
+    container.appendChild(this.hitFlash);
+
+    this.chat = new ChatUI(container);
+    this.chat.onSend = (text) => {
+      this.room.broadcastChat(text);
+      this.chat.addLine(this.name, text);
+    };
+
+    this.editor = new ScriptEditorUI(container);
+    this.editor.onApply = (source) => {
+      if (source.length > MAX_SCRIPT_SRC_LEN) {
+        return `スクリプトが長すぎます (${source.length}/${MAX_SCRIPT_SRC_LEN})`;
+      }
+      try {
+        parse(source);
+      } catch (err) {
+        return String(err instanceof Error ? err.message : err);
+      }
+      this.customSource = source;
+      this.scriptId = 'custom';
+      this.updateHud();
+      return null;
+    };
+    // 過去に適用したカスタムスクリプトを復元 (保存時に構文検証済み)
+    const savedScript = localStorage.getItem('blt-custom-script');
+    if (savedScript) this.customSource = savedScript;
 
     // ターゲット指定中の相手の足元に表示するリング
     this.targetRing = new THREE.Mesh(
@@ -122,6 +160,7 @@ export class Game {
         remote.view.sync(state.x, state.y, state.h, false);
         this.remotes.set(id, remote);
         this.world.scene.add(remote.view.object);
+        this.chat.addLine('', `* ${state.n} が参加しました`, true);
         this.updateHud();
       }
       remote.sim.push(state, now);
@@ -133,7 +172,13 @@ export class Game {
       }
     };
     this.room.onFire = (id, ev) => this.handleRemoteFire(id, ev);
+    this.room.onChat = (id, text) => {
+      const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
+      this.chat.addLine(name, text, text.startsWith('* '));
+    };
     this.room.onPeerLeave = (id) => {
+      const name = this.remotes.get(id)?.sim.name;
+      if (name) this.chat.addLine('', `* ${name} が退出しました`, true);
       this.removeRemote(id);
       this.updateHud();
     };
@@ -213,12 +258,19 @@ export class Game {
     }
 
     this.tickToNow(now);
+    this.checkHits(now);
+
+    // 無敵時間中は点滅させる
+    const invuln = now < this.player.invulnUntil;
+    this.playerView.object.visible = !invuln || Math.floor(now / 120) % 2 === 0;
+    this.playerView.setHp(this.player.hp / MAX_HP);
 
     this.markerTargets.clear();
     for (const [id, remote] of this.remotes) {
       const s = remote.sim.sample(now);
       if (s.visible) {
         remote.view.sync(s.x, s.y, s.h);
+        remote.view.setHp(remote.sim.hp / MAX_HP);
         this.markerTargets.set(id, { name: remote.sim.name, x: s.x, z: s.y });
         if (id === this.targetId) {
           this.targetRing.position.set(s.x, 0.05, s.y);
@@ -240,6 +292,53 @@ export class Game {
       this.hudTimer = 0;
       this.updateHud();
     }
+  }
+
+  // --- 被弾 (自己申告制: 自機の判定は自分だけが行う) -------------------------
+
+  private checkHits(now: number): void {
+    if (now < this.player.invulnUntil) return;
+    const px = this.player.pos.x;
+    const py = this.player.pos.y;
+    const pr = 0.7; // 自機の当たり半径
+    const bs = this.engine.bullets;
+    let died = false;
+    let killerId = '';
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      if (!b.alive || b.owner === this.room.selfId) continue;
+      const dx = b.x - px;
+      const dy = b.y - py;
+      const rr = b.radius + pr;
+      if (dx * dx + dy * dy > rr * rr) continue;
+      const dead = this.player.takeHit(b.dur, now);
+      this.engine.killAt(i); // 当たった弾は消費する (自分の画面上のみ)
+      this.flashHit();
+      if (dead) {
+        died = true;
+        killerId = b.owner;
+        break;
+      }
+    }
+    if (died) {
+      const killer =
+        this.remotes.get(killerId)?.sim.name ?? killerId.slice(0, 8);
+      const announce = `* ${this.name} は ${killer} に撃墜されました`;
+      this.chat.addLine('', announce, true);
+      this.room.broadcastChat(announce);
+      this.player.respawn(
+        (Math.random() * 2 - 1) * SPAWN_RANGE,
+        (Math.random() * 2 - 1) * SPAWN_RANGE,
+        now,
+      );
+      this.playerView.sync(this.player.pos.x, this.player.pos.y, this.player.heading);
+      this.sendStateNow();
+    }
+  }
+
+  private flashHit(): void {
+    this.hitFlash.classList.add('on');
+    window.setTimeout(() => this.hitFlash.classList.remove('on'), 120);
   }
 
   // --- 弾幕 -----------------------------------------------------------------
@@ -267,8 +366,11 @@ export class Game {
     const now = performance.now();
     if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
     this.lastFireAt = now;
-    const script = DANMAKU_SCRIPTS[this.scriptId];
-    if (!script) return;
+    const source =
+      this.scriptId === 'custom'
+        ? this.customSource
+        : (DANMAKU_SCRIPTS[this.scriptId]?.source ?? null);
+    if (!source) return;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
       script: this.scriptId,
@@ -278,11 +380,13 @@ export class Game {
       dir: this.player.heading,
       at: Date.now(),
       target: this.targetId ?? undefined,
+      // カスタムスクリプトはソースを同梱して他クライアントでも再現できるようにする
+      src: this.scriptId === 'custom' ? source : undefined,
     };
     this.seenFireIds.add(ev.id);
     // 発射元は自機の現在位置に追従する (移動しながらの多段発射に対応)
     this.engine.startScript(
-      script.source,
+      source,
       ev.seed,
       () => this.player.pos,
       ev.dir,
@@ -299,8 +403,10 @@ export class Game {
       const it = this.seenFireIds.values();
       for (let i = 0; i < 500; i++) this.seenFireIds.delete(it.next().value as string);
     }
-    const script = DANMAKU_SCRIPTS[ev.script];
-    if (!script) return;
+    const source =
+      DANMAKU_SCRIPTS[ev.script]?.source ??
+      (ev.src && ev.src.length <= MAX_SCRIPT_SRC_LEN ? ev.src : null);
+    if (!source) return;
     // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える。
     // ev.at は相手の時計なので、位置同期から推定した時計ずれを差し引いて
     // 正味の遅延に直す (時計が数秒ずれた端末間で弾が一気に出現する事故対策)
@@ -319,7 +425,7 @@ export class Game {
       return sim?.hasPos ? { x: sim.lastX, y: sim.lastY } : { x: ev.x, y: ev.y };
     };
     this.engine.startScript(
-      script.source,
+      source,
       ev.seed,
       origin,
       ev.dir,
@@ -346,10 +452,20 @@ export class Game {
 
   private setupInput(container: HTMLElement): void {
     window.addEventListener('keydown', (e) => {
-      if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.code === 'Space') {
         e.preventDefault();
         this.fire();
+        return;
+      }
+      if (e.code === 'Enter') {
+        e.preventDefault();
+        this.chat.open();
+        return;
+      }
+      if (e.code === 'KeyE') {
+        this.editor.toggle();
         return;
       }
       const scriptIds = Object.keys(DANMAKU_SCRIPTS);
@@ -358,6 +474,9 @@ export class Game {
         const idx = Number(digit[1]) - 1;
         if (idx < scriptIds.length) {
           this.scriptId = scriptIds[idx];
+          this.updateHud();
+        } else if (idx === scriptIds.length && this.customSource) {
+          this.scriptId = 'custom';
           this.updateHud();
         }
       }
@@ -466,18 +585,23 @@ export class Game {
   }
 
   private updateHud(): void {
-    const script = DANMAKU_SCRIPTS[this.scriptId];
+    const scriptName =
+      this.scriptId === 'custom'
+        ? '自作スクリプト'
+        : (DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId);
     const targetName = this.targetId
       ? (this.remotes.get(this.targetId)?.sim.name ?? '?')
       : 'なし (クリックで指定)';
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
+      `HP: ${this.player.hp}/${MAX_HP}\n` +
       `relays: ${this.room.relayStatus}\n` +
       `peers: ${this.room.peerCount}\n` +
       `ice: ${iceSummary()}\n` +
       `${this.room.stats}\n` +
       `bullets: ${this.engine.aliveCount}\n` +
-      `[Space]発射 [1-4]切替: ${script?.name ?? this.scriptId}\n` +
+      `[Space]発射 [1-5]切替: ${scriptName}\n` +
+      `[Enter]チャット [E]スクリプト編集\n` +
       `target: ${targetName}`;
   }
 }

@@ -121,7 +121,15 @@ export type StatePayload = {
   h: number;
   /** 送信時刻 (epoch ms)。ピア間の時計ずれ推定に使う */
   ts: number;
+  /** 現在HP (被弾は自己申告制: 本人の申告値をそのまま表示する) */
+  hp: number;
 };
+
+/** 最大HP。弾の耐久度がそのままダメージになる */
+export const MAX_HP = 100;
+
+/** リスポーン後の無敵時間 */
+export const INVULN_MS = 2_000;
 
 /**
  * 弾幕の発射イベント。弾の座標は送らず、スクリプトIDとシードだけを同期して
@@ -140,7 +148,12 @@ export interface FireEvent {
   at: number;
   /** 狙い撃ちのターゲット (ピアID)。DSL の aim / tdist が参照する */
   target?: string;
+  /** カスタムスクリプトのソース (script が同梱スクリプトにない場合に使用) */
+  src?: string;
 }
+
+/** 共有されるカスタムスクリプトソースの長さ上限 */
+export const MAX_SCRIPT_SRC_LEN = 4_000;
 
 /** 信頼チャネルのメッセージ。チャットも今後ここに追加する */
 export type ReliableMessage =
