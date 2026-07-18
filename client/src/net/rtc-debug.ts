@@ -1,5 +1,5 @@
 // WebRTC 接続の診断機構。RTCPeerConnection を差し替えて、ページ内で生成される
-// 全接続 (trystero 内部のものを含む) の ICE 状態遷移と採用経路を観測する。
+// 全接続の ICE 状態遷移と採用経路を観測する。
 // 「シグナリングは届くのに映らない」= ICE 失敗 (AP間分離・NAT非対応等) の
 // 切り分けを現地の HUD / コンソールだけで行えるようにするための試作用機構。
 
@@ -11,7 +11,7 @@ export function iceSummary(): string {
   const counts = new Map<string, number>();
   for (const pc of live) {
     const s = pc.iceConnectionState;
-    if (s === 'new') continue; // trystero が事前確保するオファープール分は除外
+    if (s === 'new') continue; // ネゴシエーション開始前の接続は表示しない
     counts.set(s, (counts.get(s) ?? 0) + 1);
   }
   if (counts.size === 0) return '-';

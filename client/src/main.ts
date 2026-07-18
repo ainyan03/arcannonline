@@ -5,7 +5,7 @@ import { showJoinOverlay } from './ui/join';
 installRtcDebug();
 
 async function boot(): Promise<void> {
-  // trystero (シグナリング) は crypto.subtle を必要とする。
+  // WebRTC・Nostr 署名まわりはセキュアコンテキストを前提とする。
   // これは HTTPS か localhost でのみ使えるため、欠けている場合は案内を出して止める。
   if (!globalThis.crypto?.subtle) {
     document.body.innerHTML =

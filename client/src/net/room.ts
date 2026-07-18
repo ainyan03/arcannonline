@@ -1,107 +1,68 @@
-import { getRelaySockets, joinRoom, selfId } from 'trystero/nostr';
 import {
   APP_ID,
+  NOSTR_RELAYS,
   ROOM_NAME,
   type StatePayload,
 } from '../../../shared/src/protocol';
-
-/** 同時接続する Nostr リレー数 (既定5)。多いほどリレー個別の不調に強い */
-const RELAY_REDUNDANCY = 8;
+import { Mesh } from './mesh';
+import { NostrSignaling } from './nostr';
 
 /**
- * trystero ルームのラッパー。
- * シグナリングは公開 Nostr リレー経由で行われ、確立後は全ピアと P2P 直接通信になる。
- * 参加中の全ピアと自動的にメッシュ接続される（近傍による接続の取捨選択は今後の課題）。
- * リレー不調やゴーストピアからの回復用に、ルームの入り直し (rejoin) をサポートする。
+ * ゲームルームのファサード。
+ * ブートストラップ (Nostr) と P2P メッシュ (PEX 付き) を束ねる。
  */
 export class GameRoom {
-  readonly selfId = selfId;
+  readonly selfId: string;
 
-  onPeerJoin?: (id: string) => void;
-  onPeerLeave?: (id: string) => void;
-  onState?: (id: string, state: StatePayload) => void;
-
-  private room!: ReturnType<typeof joinRoom>;
-  private sendStateFn!: (data: StatePayload) => void;
-  private rxCount = 0;
-  private txCount = 0;
-  private txErrCount = 0;
-  private rejoinCount = 0;
+  private readonly nostr: NostrSignaling;
+  private readonly mesh: Mesh;
 
   constructor() {
-    this.init();
+    this.nostr = new NostrSignaling(`${APP_ID}/${ROOM_NAME}`);
+    this.mesh = new Mesh(this.nostr);
+    this.selfId = this.mesh.selfId;
+    this.nostr.connect(NOSTR_RELAYS);
   }
 
-  /** ルームへ入り直す。ピアが長時間発見できない場合の回復手段 */
-  rejoin(): void {
-    this.rejoinCount++;
-    console.warn(`[room] rejoin #${this.rejoinCount}`);
-    void this.room.leave();
-    this.init();
+  set onPeerJoin(fn: ((id: string) => void) | undefined) {
+    this.mesh.onPeerOpen = fn;
+  }
+
+  set onPeerLeave(fn: ((id: string) => void) | undefined) {
+    this.mesh.onPeerClose = fn;
+  }
+
+  set onState(fn: ((id: string, state: StatePayload) => void) | undefined) {
+    this.mesh.onState = fn;
   }
 
   get peerCount(): number {
-    return Object.keys(this.room.getPeers()).length;
+    return this.mesh.openCount;
+  }
+
+  /** ブートストラップ用 Nostr リレーの接続状況 "open/total" */
+  get relayStatus(): string {
+    return this.nostr.status;
   }
 
   /** 送受信の統計 (デバッグ用) */
   get stats(): string {
-    return (
-      `tx: ${this.txCount} (err ${this.txErrCount}) rx: ${this.rxCount}` +
-      (this.rejoinCount > 0 ? ` rejoin: ${this.rejoinCount}` : '')
-    );
-  }
-
-  /** シグナリング用 Nostr リレーの接続状況 "open/total" */
-  get relayStatus(): string {
-    const sockets = Object.values(
-      (getRelaySockets as () => Record<string, WebSocket>)(),
-    );
-    const open = sockets.filter((s) => s.readyState === WebSocket.OPEN).length;
-    return `${open}/${sockets.length}`;
+    return this.mesh.stats;
   }
 
   broadcastState(state: StatePayload): void {
-    this.txCount++;
-    this.sendStateFn(state);
+    this.mesh.broadcastState(state);
+  }
+
+  /** 回復要求: リレー再接続とプレゼンス再発行 (ウォッチドッグから呼ばれる) */
+  rejoin(): void {
+    console.warn('[room] recover: reconnect relays + republish presence');
+    this.nostr.reconnectNow();
+    this.mesh.publishPresence(true);
   }
 
   leave(): void {
-    void this.room.leave();
-  }
-
-  private init(): void {
-    this.room = joinRoom(
-      { appId: APP_ID, relayConfig: { redundancy: RELAY_REDUNDANCY } },
-      ROOM_NAME,
-      {
-        onJoinError: (err) =>
-          console.error('[room] join error', JSON.stringify(err)),
-      },
-    );
-
-    const stateAction = this.room.makeAction<StatePayload>('state');
-    this.sendStateFn = (data) => {
-      stateAction.send(data).catch((err) => {
-        // 切断直後の送信失敗は次の周期で再送されるが、頻度を観測できるようにする
-        this.txErrCount++;
-        if (this.txErrCount % 50 === 1) {
-          console.warn('[room] state send failed', err);
-        }
-      });
-    };
-    stateAction.onMessage = (data, ctx) => {
-      this.rxCount++;
-      this.onState?.(ctx.peerId, data);
-    };
-
-    this.room.onPeerJoin = (peerId) => {
-      console.debug(`[room] peer join ${peerId}`);
-      this.onPeerJoin?.(peerId);
-    };
-    this.room.onPeerLeave = (peerId) => {
-      console.debug(`[room] peer leave ${peerId}`);
-      this.onPeerLeave?.(peerId);
-    };
+    this.mesh.leave();
+    this.nostr.dispose();
   }
 }

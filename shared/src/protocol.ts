@@ -1,8 +1,11 @@
 // ゲーム共通の定数と P2P メッセージ型定義。
 // 座標系: フィールドは原点中心の正方形 2D 平面 (x, y)。描画側で XZ 平面へ写像する。
 //
-// シグナリングは trystero (Nostr リレー経由) に委ねるため自前サーバは持たない。
-// 同一ルームの全ピアと WebRTC 接続され、以降のデータ交換はすべて P2P で行われる。
+// ネットワーク構成 (自前実装):
+// - ブートストラップ: 公開 Nostr リレーへの署名付き ephemeral イベントで
+//   プレゼンス通知と WebRTC シグナリングを行う (nostr.ts)
+// - 確立後: WebRTC DataChannel の P2P メッシュ。既知ピア一覧の交換 (PEX) と
+//   シグナリングの中継もメッシュ上で行い、リレー依存を最初の1本に減らす (mesh.ts)
 
 export type Vec2 = { x: number; y: number };
 
@@ -18,20 +21,79 @@ export const PLAYER_SPEED = 8;
 /** P2P での自機状態送信間隔 (~15Hz) */
 export const STATE_INTERVAL_MS = 66;
 
-/** trystero の名前空間 (appId)。衝突しにくい固有文字列にする */
-export const APP_ID = 'lovyan-blt-proto';
+/** 同時 P2P 接続数の上限 */
+export const MAX_PEERS = 32;
 
-/** ルーム名 = フィールド単位。マップ分割する際はここを増やす */
+/** ルームトピック。マップ分割する際は ROOM_NAME を増やす */
+export const APP_ID = 'lovyan-blt-proto';
 export const ROOM_NAME = 'field-1';
 
+/** プレゼンス(在室通知)の発行間隔 */
+export const PRESENCE_INTERVAL_MS = 15_000;
+
+/** PEX (既知ピア一覧の交換) の間隔 */
+export const PEX_INTERVAL_MS = 10_000;
+
+/** この時間プレゼンスも通信もないピアは居なくなったとみなす */
+export const STALE_PRESENCE_MS = 60_000;
+
+/** 接続確立がこの時間を超えて完了しないピアは作り直す */
+export const CONNECT_TIMEOUT_MS = 45_000;
+
+/** ブートストラップ用の公開 Nostr リレー */
+export const NOSTR_RELAYS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+  'wss://nostr.mom',
+  'wss://relay.primal.net',
+  'wss://offchain.pub',
+  'wss://nostr.oxtr.dev',
+  'wss://relay.snort.social',
+];
+
 // ---------------------------------------------------------------------------
-// P2P メッセージ (trystero action のペイロード)
-// ※ trystero の型制約 (Record 互換) のため interface でなく type で定義する
+// WebRTC シグナリング
+
+export interface SessionDescription {
+  type: 'offer' | 'answer' | 'pranswer' | 'rollback';
+  sdp?: string;
+}
+
+export interface IceCandidate {
+  candidate?: string;
+  sdpMid?: string | null;
+  sdpMLineIndex?: number | null;
+  usernameFragment?: string | null;
+}
+
+export type SignalPayload =
+  | { kind: 'description'; description: SessionDescription }
+  | { kind: 'candidate'; candidate: IceCandidate | null };
+
+/** シグナリングの封筒。Nostr 経由とメッシュ中継の二重送信を id で重複排除する */
+export interface SignalEnvelope {
+  id: string;
+  to: string;
+  from: string;
+  payload: SignalPayload;
+}
+
+// ---------------------------------------------------------------------------
+// Nostr イベントの content (JSON)
+
+export type NostrContent =
+  | { t: 'presence' }
+  | { t: 'bye' }
+  | { t: 'signal'; env: SignalEnvelope };
+
+// ---------------------------------------------------------------------------
+// P2P DataChannel メッセージ
 
 /**
- * 位置同期 (非同期・高頻度)。h は進行方向 (rad, +x 基準で +y 方向へ正)。
- * n (名前) を毎回含めるのは冗長だが、接続直後の一発勝負なハンドシェイク
- * (相手チャネル未確立で喪失し得る) を避けて確実性を取る。
+ * 位置同期 (非信頼チャネル・高頻度)。h は進行方向 (rad, +x 基準で +y 方向へ正)。
+ * n (名前) を毎回含めるのは冗長だが、参加直後のハンドシェイク喪失で相手が
+ * 永久に表示されない事故を避けて確実性を取る。
  */
 export type StatePayload = {
   n: string;
@@ -43,5 +105,8 @@ export type StatePayload = {
   h: number;
 };
 
-/** チャット（今後実装）。弾幕の発射イベントも同様に action を追加する */
-export type ChatPayload = { text: string };
+/** 信頼チャネルのメッセージ。チャット・弾幕発射イベントも今後ここに追加する */
+export type ReliableMessage =
+  | { type: 'pex'; peers: string[] }
+  | { type: 'sig'; env: SignalEnvelope }
+  | { type: 'chat'; text: string };

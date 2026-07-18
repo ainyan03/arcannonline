@@ -2,39 +2,55 @@
 
 オープンフィールドをキャラクターが歩き回り、弾幕で撃ち合う多人数参加型ブラウザゲームの試作。
 **自前サーバを一切持たず**、GitHub Pages の静的配信だけで動作する。
-シグナリング（接続確立の仲介）は [trystero](https://github.com/dmotz/trystero) 経由で
-公開 Nostr リレーに委ね、確立後は WebRTC DataChannel による P2P 直接通信で同期する。
 
 ## アーキテクチャ
+
+ネットワーク層はすべて自前実装（外部P2Pライブラリ不使用）:
 
 ```
 GitHub Pages（静的配信のみ）
     │ 配信
     ▼
-ブラウザA ── 公開Nostrリレー(wss) ── ブラウザB   … シグナリングのみ（trystero）
+ブラウザA ── 公開Nostrリレー(wss) ── ブラウザB   … ブートストラップ (nostr.ts)
+    │        プレゼンス通知と SDP 交換 (署名付き ephemeral イベント)
     │
-    └────── WebRTC DataChannel（P2P直接通信） ──────┐
-             ├ profile: 参加時の名前交換              ▼
-             ├ state:   位置・向き (~15Hz)        ブラウザB
-             └ chat / fire: チャット・弾幕発射イベント（予定）
+    └────── WebRTC DataChannel メッシュ (peer.ts / mesh.ts) ──── ブラウザB
+             ├ state:    位置・向き (非信頼・非順序, ~15Hz)
+             ├ reliable: PEX・シグナリング中継・チャット(予定)・発射イベント(予定)
+             └ PEX: 既知ピア一覧の交換 + シグナリングのメッシュ中継
+                    → リレー依存は事実上「最初の1本の接続確立」のみ
 ```
 
-- 演算は 2D 平面 (x, y)。描画時に XZ 平面へ写像し Three.js で 3D 俯瞰表示する。
-- 同一ルーム (`field-1`) の全ピアと自動でメッシュ接続される。
-  近傍だけに高頻度同期を絞る interest management は今後の課題
-  （想定スケール: 同時 16〜32 人、平均 24 人）。
-- NAT 越えは STUN のみ（TURN なし）。直接通信が確立できない相手とは同期しない割り切り。
-- 被弾判定は自己申告制（チート対策はスコープ外）。
+- **ピアID = secp256k1 公開鍵**。Nostr イベントは BIP340 schnorr 署名付きで、
+  シグナリングのなりすましは署名検証で弾かれる
+- **バニラICE**: ICE候補はSDPに同梱して1発で送る（トリクル不使用）。
+  リレーへのイベント数を1接続あたり2件に抑え、レート制限を回避する
+- **オファーはID小さい側のみ発行**（perfect negotiation + glare回避）
+- 演算は 2D 平面 (x, y)。描画時に XZ 平面へ写像し Three.js で 3D 俯瞰表示
+- NAT 越えは STUN のみ（TURN なし）。直接通信が確立できない相手とは同期しない割り切り
+- 被弾判定は自己申告制（チート対策はスコープ外）
+- 想定スケール: 同時 16〜32 人、平均 24 人
+
+### 耐障害設計（実地テストからのフィードバック）
+
+- 状態送信は rAF でなく setInterval + イベント駆動（バックグラウンドタブの
+  スロットリング対策。接続確立時の即時送信と受信応答型 keepalive を併用）
+- `pagehide` で退室通知（スマホの画面ロック対策）、復帰時は自動再参加
+- 10秒間無通信のリモートはゴーストとみなして表示から除去
+- リレーのイベントリプレイは `created_at` の鮮度チェックで排除
+- HUD に relays / peers / ice / tx / rx の診断表示（rtc-debug.ts が
+  ICE 状態遷移と採用経路をコンソールへ記録）
 
 ## 開発
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+npm run dev          # http://localhost:5173  (localhost はセキュアコンテキスト)
+npm run dev:https    # https://<IP>:5174     (LAN内の他端末から。自己署名証明書)
 ```
 
 ブラウザ（タブ）を2つ以上開いて参加すると、互いのキャラクターが見える。
-シグナリングに公開 Nostr リレーを使うため、開発時もインターネット接続が必要。
+ブートストラップに公開 Nostr リレーを使うため、開発時もインターネット接続が必要。
 
 ## デプロイ (GitHub Pages)
 
@@ -51,19 +67,24 @@ Vite ビルド成果物 (`client/dist`) が GitHub Pages に公開される。
 ## ディレクトリ構成
 
 ```
-shared/src/protocol.ts   共通の定数・P2Pメッセージ型定義
+shared/src/protocol.ts   共通の定数・メッセージ型定義
 client/src/
-  net/room.ts            trystero ルームのラッパー
+  net/nostr.ts           最小Nostrクライアント (NIP-01, ブートストラップ)
+  net/peer.ts            WebRTC 1対向接続 (perfect negotiation, バニラICE)
+  net/mesh.ts            P2Pメッシュ管理 (PEX, シグナリング中継)
+  net/room.ts            上記を束ねるファサード
+  net/rtc-debug.ts       ICE診断 (状態遷移・採用経路のログ)
   game/                  描画・入力・プレイヤー
   ui/                    参加オーバーレイ
 ```
 
 ## ロードマップ
 
-1. ~~フィールド移動 + P2P 位置同期 + GitHub Pages 静的デプロイ~~（現在ここ）
-2. 弾幕 DSL（東方弾幕風系の文法）のパーサ・インタプリタ。
+1. ~~フィールド移動 + P2P 位置同期 + GitHub Pages 静的デプロイ~~
+2. ~~ネットワーク層の自前化 (Nostrブートストラップ + PEXメッシュ)~~（現在ここ）
+3. 弾幕 DSL（東方弾幕風系の文法）のパーサ・インタプリタ。
    弾は座標ではなく発射イベント（時刻・位置・スクリプトID・乱数シード）を同期し、
    各クライアントで決定論的に再現演算する
-3. 被弾の自己申告とチャット
-4. 距離ベースの interest management（遠いピアへの送信間引き）
-5. シミュレーションコアの性能実測（5万発 tick + 当たり判定）→ 必要なら WASM 化
+4. 被弾の自己申告とチャット
+5. 距離ベースの interest management（遠いピアへの送信間引き）
+6. シミュレーションコアの性能実測（5万発 tick + 当たり判定）→ 必要なら WASM 化
