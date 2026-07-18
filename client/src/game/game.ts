@@ -11,7 +11,6 @@ import {
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
   MAX_HP,
-  MAX_OWN_BULLETS,
   MAX_SCRIPT_SRC_LEN,
   STATE_INTERVAL_MS,
   TICK_MS,
@@ -431,9 +430,8 @@ export class Game {
     const seed = (Math.random() * 0x100000000) >>> 0;
     const targetResolver = this.makeTargetResolver(this.targetId ?? undefined);
 
-    // 発射ゲート1: 自分の同時存在弾数上限
-    if (this.engine.aliveOwned(this.room.selfId) >= MAX_OWN_BULLETS) return;
-    // 発射ゲート2: エネルギー。総コストを同シードの空実行で算出して一括消費
+    // 発射ゲート: エネルギー。総コストを同シードの空実行で算出して一括消費
+    // (同時存在弾数の上限はエンジン側で「最古の弾の寿命前倒し」として処理)
     const cost = this.engine.estimateCost(
       source,
       seed,
@@ -750,11 +748,8 @@ export class Game {
         : (DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId);
     this.fireBtn.setScriptName(scriptName);
     const estCost = this.estimateSelectedCost();
-    const ownBullets = this.engine.aliveOwned(this.room.selfId);
     this.fireBtn.setEnabled(
-      estCost !== null &&
-        this.player.energy >= estCost &&
-        ownBullets < MAX_OWN_BULLETS,
+      estCost !== null && this.player.energy >= estCost,
     );
     const targetName = this.targetId
       ? (this.remotes.get(this.targetId)?.sim.name ?? '?')

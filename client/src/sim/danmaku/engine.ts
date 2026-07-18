@@ -7,6 +7,7 @@ import {
   BULLET_COST_PER_RADIUS,
   FIELD_SIZE,
   MAX_BULLETS,
+  MAX_OWN_BULLETS,
   TICK_RATE,
   type Vec2,
 } from '../../../../shared/src/protocol';
@@ -52,6 +53,8 @@ export interface Bullet {
   fireId: string;
   /** そのスクリプト実行が何発目に生成した弾か */
   spawnIdx: number;
+  /** 生成された tick (オーナー上限超過時の「最古の弾」判定に使う) */
+  born: number;
 }
 
 interface RunEntry {
@@ -64,10 +67,15 @@ export class BulletEngine {
 
   private readonly runs: RunEntry[] = [];
   private readonly compiled = new Map<string, Program>();
+  private readonly ownerCounts = new Map<string, number>();
   private alive = 0;
   private freeSlots: number[] = [];
+  private tickCounter = 0;
 
-  constructor(private readonly maxBullets = MAX_BULLETS) {}
+  constructor(
+    private readonly maxBullets = MAX_BULLETS,
+    private readonly ownerCap = MAX_OWN_BULLETS,
+  ) {}
 
   /** ベンチマーク用: ランダムな弾を大量投入する (ゲーム本体では使わない) */
   debugFill(count: number, seed = 1, owners = 4): void {
@@ -93,13 +101,9 @@ export class BulletEngine {
     return this.alive;
   }
 
-  /** 指定オーナーの生存弾数 (同時存在弾数上限の判定用) */
+  /** 指定オーナーの生存弾数 */
   aliveOwned(owner: string): number {
-    let n = 0;
-    for (const b of this.bullets) {
-      if (b.alive && b.owner === owner) n++;
-    }
-    return n;
+    return this.ownerCounts.get(owner) ?? 0;
   }
 
   /**
@@ -226,6 +230,7 @@ export class BulletEngine {
   }
 
   tick(): void {
+    this.tickCounter++;
     // スクリプト進行 (弾の生成)
     for (let i = this.runs.length - 1; i >= 0; i--) {
       const entry = this.runs[i];
@@ -277,6 +282,11 @@ export class BulletEngine {
     );
     const ttl = lifeTicks - advanceTicks;
     if (ttl <= 0) return;
+    // オーナーごとの上限: 超える場合は最も古い弾の寿命を前倒しして消す。
+    // 全クライアントが同じ規則を適用するため追加の同期なしで一致する
+    if ((this.ownerCounts.get(owner) ?? 0) >= this.ownerCap) {
+      this.killOldest(owner);
+    }
     const a = angleDeg * DEG_TO_RAD;
     const spd = Math.min(Math.max(speed, 0), 60);
     const vx = Math.cos(a) * spd;
@@ -293,6 +303,7 @@ export class BulletEngine {
       ttl,
       fireId,
       spawnIdx,
+      born: this.tickCounter - advanceTicks,
     };
     const slot = this.freeSlots.pop();
     if (slot !== undefined) {
@@ -301,6 +312,7 @@ export class BulletEngine {
       this.bullets.push(bullet);
     }
     this.alive++;
+    this.ownerCounts.set(owner, (this.ownerCounts.get(owner) ?? 0) + 1);
   }
 
   /** 外部からの弾の消費 (被弾処理など)。index は bullets 配列上の位置 */
@@ -327,6 +339,35 @@ export class BulletEngine {
     b.alive = false;
     this.freeSlots.push(index);
     this.alive--;
+    const n = (this.ownerCounts.get(b.owner) ?? 1) - 1;
+    if (n <= 0) this.ownerCounts.delete(b.owner);
+    else this.ownerCounts.set(b.owner, n);
+  }
+
+  /**
+   * 指定オーナーの最も古い弾を消す。同 tick 生成のタイブレークは
+   * (fireId, spawnIdx) で行う。プール上のスロット順はクライアント毎に
+   * 異なり得るため、順序判定には使わない
+   */
+  private killOldest(owner: string): void {
+    let oldest: Bullet | null = null;
+    let oldestIdx = -1;
+    const bs = this.bullets;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      if (!b.alive || b.owner !== owner) continue;
+      if (
+        oldest === null ||
+        b.born < oldest.born ||
+        (b.born === oldest.born &&
+          (b.fireId < oldest.fireId ||
+            (b.fireId === oldest.fireId && b.spawnIdx < oldest.spawnIdx)))
+      ) {
+        oldest = b;
+        oldestIdx = i;
+      }
+    }
+    if (oldestIdx >= 0) this.kill(oldestIdx);
   }
 
   /**

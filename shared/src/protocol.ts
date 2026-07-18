@@ -143,7 +143,12 @@ export const BULLET_COST_BASE = 0.5;
 export const BULLET_COST_PER_DUR = 0.5;
 export const BULLET_COST_PER_RADIUS = 2;
 
-/** 自分の弾の同時存在数上限 (エネルギーと併用の安全弁) */
+/**
+ * オーナーごとの弾の同時存在数上限 (エネルギーと併用の安全弁)。
+ * 超過時は発射をブロックせず、そのオーナーの最も古い弾から寿命を
+ * 前倒しして消す (FIFO)。全クライアントが同じ規則を適用するため
+ * 追加の同期通信なしで一致する
+ */
 export const MAX_OWN_BULLETS = 300;
 
 /**

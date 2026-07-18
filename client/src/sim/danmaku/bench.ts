@@ -19,7 +19,7 @@ export function benchEngine(
   const lines: string[] = [];
 
   for (const n of counts) {
-    const engine = new BulletEngine(n + 100);
+    const engine = new BulletEngine(n + 100, Infinity);
     engine.debugFill(n, 1, 1); // 同一オーナー: 相殺なし
     for (let i = 0; i < 5; i++) engine.tick(); // ウォームアップ (JIT)
     const ms = measure(engine, 30);
@@ -30,7 +30,7 @@ export function benchEngine(
   }
 
   for (const n of counts) {
-    const engine = new BulletEngine(n + 100);
+    const engine = new BulletEngine(n + 100, Infinity);
     engine.debugFill(n, 1, 4); // 4オーナー混在: 相殺あり
     const before = engine.aliveCount;
     const ms = measure(engine, 10);
