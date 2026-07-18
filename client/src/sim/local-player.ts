@@ -65,6 +65,7 @@ export class LocalPlayerSim {
     return {
       n: this.name,
       seq: this.seq++,
+      ts: Date.now(),
       x: this.pos.x,
       y: this.pos.y,
       vx: this.vel.x,

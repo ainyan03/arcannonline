@@ -279,9 +279,15 @@ export class Game {
     }
     const script = DANMAKU_SCRIPTS[ev.script];
     if (!script) return;
-    // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える
+    // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える。
+    // ev.at は相手の時計なので、位置同期から推定した時計ずれを差し引いて
+    // 正味の遅延に直す (時計が数秒ずれた端末間で弾が一気に出現する事故対策)
+    const sim = this.remotes.get(fromId)?.sim;
+    const skew =
+      sim && Number.isFinite(sim.clockSkewMin) ? sim.clockSkewMin : 0;
+    const delayMs = Date.now() - ev.at - skew;
     const catchup = Math.min(
-      Math.max(Math.floor((Date.now() - ev.at) / TICK_MS), 0),
+      Math.max(Math.floor(delayMs / TICK_MS), 0),
       MAX_FIRE_CATCHUP_TICKS,
     );
     // 発射元は同期済みの相手最新位置に追従する。位置未受信・退室後は

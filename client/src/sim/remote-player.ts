@@ -40,6 +40,14 @@ export class RemotePlayerSim {
   lastY = 0;
   hasPos = false;
 
+  /**
+   * この相手との「時計ずれ + 最小伝送遅延」の推定値 (ms)。
+   * (受信時刻 - 送信時刻) の観測最小値。相手の時計が進んでいれば負にもなる。
+   * 発射イベントの遅延計算からこれを差し引くと、時計が揃っていない
+   * 端末間でも正味の伝送遅延だけを見積もれる。
+   */
+  clockSkewMin = Infinity;
+
   private readonly buf: Snapshot[] = [];
   private lastSeq = -1;
   private readonly sampleTmp: RemoteSample = { x: 0, y: 0, h: 0, visible: false };
@@ -58,6 +66,8 @@ export class RemotePlayerSim {
     this.lastX = msg.x;
     this.lastY = msg.y;
     this.hasPos = true;
+    const skew = Date.now() - msg.ts;
+    if (skew < this.clockSkewMin) this.clockSkewMin = skew;
     this.buf.push({ t: now, x: msg.x, y: msg.y, h: msg.h });
     if (this.buf.length > 60) this.buf.shift();
   }

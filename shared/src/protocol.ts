@@ -52,8 +52,9 @@ export const MAX_BULLETS = 8192;
 /** 発射のクールダウン */
 export const FIRE_COOLDOWN_MS = 400;
 
-/** 受信した発射イベントを過去に遡って再生する上限 (tick) */
-export const MAX_FIRE_CATCHUP_TICKS = TICK_RATE * 5;
+/** 受信した発射イベントを過去に遡って再生する上限 (tick)。
+ * 遅延は時計ずれ補正済みの推定値を使うため、正常時は数 tick に収まる */
+export const MAX_FIRE_CATCHUP_TICKS = TICK_RATE;
 
 /** ブートストラップ用の公開 Nostr リレー */
 export const NOSTR_RELAYS = [
@@ -118,6 +119,8 @@ export type StatePayload = {
   vx: number;
   vy: number;
   h: number;
+  /** 送信時刻 (epoch ms)。ピア間の時計ずれ推定に使う */
+  ts: number;
 };
 
 /**
