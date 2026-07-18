@@ -138,6 +138,8 @@ export interface FireEvent {
   dir: number;
   /** 発射時刻 (epoch ms) */
   at: number;
+  /** 狙い撃ちのターゲット (ピアID)。DSL の aim / tdist が参照する */
+  target?: string;
 }
 
 /** 信頼チャネルのメッセージ。チャットも今後ここに追加する */

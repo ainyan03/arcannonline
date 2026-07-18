@@ -68,6 +68,12 @@ export class Game {
   private lastTapAt = 0;
   private lastTapX = 0;
   private lastTapY = 0;
+  private downAt = 0;
+  private downX = 0;
+  private downY = 0;
+  private targetId: string | null = null;
+  private readonly targetRing: THREE.Mesh;
+  private readonly projTmp = new THREE.Vector3();
 
   constructor(container: HTMLElement, private readonly name: string) {
     this.world = createWorld(container);
@@ -90,6 +96,16 @@ export class Game {
     this.hud = document.createElement('div');
     this.hud.className = 'hud';
     container.appendChild(this.hud);
+
+    // ターゲット指定中の相手の足元に表示するリング
+    this.targetRing = new THREE.Mesh(
+      new THREE.RingGeometry(0.9, 1.25, 32),
+      new THREE.MeshBasicMaterial({ color: 0xff5544, side: THREE.DoubleSide }),
+    );
+    this.targetRing.rotation.x = -Math.PI / 2;
+    this.targetRing.position.y = 0.05;
+    this.targetRing.visible = false;
+    this.world.scene.add(this.targetRing);
 
     this.room = new GameRoom();
     // 接続確立の瞬間に1発送る: 新規参加者が、アイドル中(タイマー間引き中)の
@@ -204,8 +220,12 @@ export class Game {
       if (s.visible) {
         remote.view.sync(s.x, s.y, s.h);
         this.markerTargets.set(id, { name: remote.sim.name, x: s.x, z: s.y });
+        if (id === this.targetId) {
+          this.targetRing.position.set(s.x, 0.05, s.y);
+        }
       }
     }
+    this.targetRing.visible = this.targetId !== null;
 
     this.bulletView.sync(this.engine.bullets, this.room.selfId);
 
@@ -257,6 +277,7 @@ export class Game {
       y: this.player.pos.y,
       dir: this.player.heading,
       at: Date.now(),
+      target: this.targetId ?? undefined,
     };
     this.seenFireIds.add(ev.id);
     // 発射元は自機の現在位置に追従する (移動しながらの多段発射に対応)
@@ -266,6 +287,7 @@ export class Game {
       () => this.player.pos,
       ev.dir,
       this.room.selfId,
+      this.makeTargetResolver(ev.target),
     );
     this.room.broadcastFire(ev);
   }
@@ -302,8 +324,22 @@ export class Game {
       origin,
       ev.dir,
       fromId,
+      this.makeTargetResolver(ev.target),
       catchup,
     );
+  }
+
+  /**
+   * ターゲット位置の解決関数を作る。自分がターゲットなら自機の現在位置
+   * (回避が正確に反映される)、他プレイヤーなら同期済みの最新位置を返す。
+   */
+  private makeTargetResolver(targetId?: string): () => Vec2 | null {
+    if (!targetId) return () => null;
+    if (targetId === this.room.selfId) return () => this.player.pos;
+    return () => {
+      const sim = this.remotes.get(targetId)?.sim;
+      return sim?.hasPos ? { x: sim.lastX, y: sim.lastY } : null;
+    };
   }
 
   // --- 入力 -----------------------------------------------------------------
@@ -327,21 +363,65 @@ export class Game {
       }
     });
 
+    const dom = this.world.renderer.domElement;
+
     // ダブルタップ (ダブルクリック) した地点への自動移動。スマホ対応のため
     // dblclick イベントではなく pointerdown 2連で自前判定する
-    this.world.renderer.domElement.addEventListener('pointerdown', (e) => {
-      const now = performance.now();
+    dom.addEventListener('pointerdown', (e) => {
+      this.downAt = performance.now();
+      this.downX = e.clientX;
+      this.downY = e.clientY;
+
       const isDouble =
-        now - this.lastTapAt < DOUBLE_TAP_MS &&
+        this.downAt - this.lastTapAt < DOUBLE_TAP_MS &&
         Math.hypot(e.clientX - this.lastTapX, e.clientY - this.lastTapY) <
           DOUBLE_TAP_PX;
-      this.lastTapAt = now;
+      this.lastTapAt = this.downAt;
       this.lastTapX = e.clientX;
       this.lastTapY = e.clientY;
       if (!isDouble) return;
+      // ダブルタップがプレイヤーに当たった場合は移動しない (ターゲット指定を優先)
+      if (this.pickRemoteAt(e.clientX, e.clientY, container)) return;
       const ground = this.raycastGround(e.clientX, e.clientY, container);
       if (ground) this.player.setTarget(ground.x, ground.y);
     });
+
+    // 短い単押し (ドラッグと区別) = クリック: 他プレイヤーのターゲット指定/解除
+    dom.addEventListener('pointerup', (e) => {
+      const dt = performance.now() - this.downAt;
+      const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
+      if (dt > 400 || moved > 6) return; // ドラッグ視点操作は除外
+      const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
+      if (!hit) return;
+      this.targetId = this.targetId === hit ? null : hit; // 再クリックで解除
+      this.updateHud();
+    });
+  }
+
+  /** 画面座標に一番近い他プレイヤーを拾う (しきい値以内)。ID を返す */
+  private pickRemoteAt(
+    clientX: number,
+    clientY: number,
+    container: HTMLElement,
+  ): string | null {
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    let best: string | null = null;
+    let bestDist = 40; // px
+    for (const [id, remote] of this.remotes) {
+      if (!remote.view.object.visible) continue;
+      const p = remote.view.object.position;
+      this.projTmp.set(p.x, 1.0, p.z).project(this.camera.camera);
+      if (this.projTmp.z > 1) continue; // カメラ背後
+      const sx = ((this.projTmp.x + 1) / 2) * w;
+      const sy = ((1 - this.projTmp.y) / 2) * h;
+      const d = Math.hypot(sx - clientX, sy - clientY);
+      if (d < bestDist) {
+        bestDist = d;
+        best = id;
+      }
+    }
+    return best;
   }
 
   /** 画面座標から地面 (y=0 平面) 上のフィールド座標を求める */
@@ -373,6 +453,10 @@ export class Game {
     if (!remote) return;
     this.remotes.delete(id);
     this.world.scene.remove(remote.view.object);
+    if (this.targetId === id) {
+      this.targetId = null;
+      this.updateHud();
+    }
   }
 
   private sendStateNow(): void {
@@ -383,6 +467,9 @@ export class Game {
 
   private updateHud(): void {
     const script = DANMAKU_SCRIPTS[this.scriptId];
+    const targetName = this.targetId
+      ? (this.remotes.get(this.targetId)?.sim.name ?? '?')
+      : 'なし (クリックで指定)';
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
       `relays: ${this.room.relayStatus}\n` +
@@ -390,6 +477,7 @@ export class Game {
       `ice: ${iceSummary()}\n` +
       `${this.room.stats}\n` +
       `bullets: ${this.engine.aliveCount}\n` +
-      `[Space]発射 [1-3]切替: ${script?.name ?? this.scriptId}`;
+      `[Space]発射 [1-4]切替: ${script?.name ?? this.scriptId}\n` +
+      `target: ${targetName}`;
   }
 }

@@ -17,6 +17,10 @@ export interface ScriptContext {
   random: () => number;
   /** 弾の生成 */
   fire: (angleDeg: number, speed: number, dur: number, radius: number) => void;
+  /** ターゲットへの角度 (deg)。未指定時は dir (評価のたびに再計算される) */
+  aim: () => number;
+  /** ターゲットまでの距離。未指定時は -1 */
+  tdist: () => number;
 }
 
 class Scope {
@@ -63,6 +67,8 @@ function evalExpr(e: Expr, scope: Scope, st: RunState): number {
       if (v !== undefined) return v;
       if (e.name === 't') return st.ctx.t;
       if (e.name === 'dir') return st.ctx.dir;
+      if (e.name === 'aim') return st.ctx.aim();
+      if (e.name === 'tdist') return st.ctx.tdist();
       throw new Error(`unknown variable '${e.name}'`);
     }
     case 'un': {

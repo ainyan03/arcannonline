@@ -10,7 +10,9 @@
 //   wait(フレーム数);     指定 tick (1/60秒) 待つ
 //   fire(角度deg, 速度, 耐久度, 半径);   弾を1発生成 (角度は絶対角。0=+x, 反時計回り)
 // 組み込み: dir (発射時の自機向き deg) / t (経過tick) / rand(a,b) /
-//           sin cos (deg) / floor abs min max
+//           sin cos (deg) / floor abs min max /
+//           aim (ターゲットへの角度deg。未指定時はdir。評価のたびに再計算) /
+//           tdist (ターゲットまでの距離。未指定時は-1)
 
 export interface DanmakuScript {
   name: string;
@@ -50,6 +52,18 @@ loop (180) {
 loop (60) {
   fire(dir + rand(0 - 30, 30), rand(8, 16), 1, 0.35);
   wait(3);
+}
+`,
+  },
+  aimshot: {
+    name: '狙い3way連射',
+    source: `
+// aim は発射のたびに再計算されるため、動くターゲットを追尾照準する
+loop (12) {
+  fire(aim - 10, 16, 1, 0.4);
+  fire(aim, 18, 2, 0.45);
+  fire(aim + 10, 16, 1, 0.4);
+  wait(8);
 }
 `,
   },

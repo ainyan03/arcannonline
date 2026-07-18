@@ -57,6 +57,8 @@ export class BulletEngine {
    * スクリプトの実行を開始する。
    * @param origin 発射元の現在位置を返す関数。移動しながらの発射で
    *   弾の出発点が追従するよう、fire のたびに評価される
+   * @param targetPos ターゲットの現在位置を返す関数 (未指定なら null)。
+   *   DSL の aim / tdist が評価のたびに参照する
    * @param catchupTicks 受信遅延分を過去に遡って再生する tick 数 (ローカル発射は 0)
    */
   startScript(
@@ -65,6 +67,7 @@ export class BulletEngine {
     origin: () => Vec2,
     dirRad: number,
     owner: string,
+    targetPos: () => Vec2 | null = () => null,
     catchupTicks = 0,
   ): void {
     let program = this.compiled.get(source);
@@ -79,13 +82,26 @@ export class BulletEngine {
     }
 
     let pendingAdvance = 0; // 追いつき再生中に生成された弾を進める tick 数
+    const dirDeg = dirRad * RAD_TO_DEG;
     const ctx: ScriptContext = {
-      dir: dirRad * RAD_TO_DEG,
+      dir: dirDeg,
       t: 0,
       random: mulberry32(seed),
       fire: (angleDeg, speed, dur, radius) => {
         const p = origin();
         this.spawn(p.x, p.y, angleDeg, speed, dur, radius, owner, pendingAdvance);
+      },
+      aim: () => {
+        const tp = targetPos();
+        if (!tp) return dirDeg;
+        const p = origin();
+        return Math.atan2(tp.y - p.y, tp.x - p.x) * RAD_TO_DEG;
+      },
+      tdist: () => {
+        const tp = targetPos();
+        if (!tp) return -1;
+        const p = origin();
+        return Math.hypot(tp.x - p.x, tp.y - p.y);
       },
     };
     const run = new ScriptRun(program, ctx);
