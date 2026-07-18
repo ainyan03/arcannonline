@@ -2,6 +2,9 @@
 // 描画/通信に依存しない純粋なモジュール。固定タイムステップ (TICK_RATE) で
 // tick() を呼ぶこと。
 import {
+  BULLET_COST_BASE,
+  BULLET_COST_PER_DUR,
+  BULLET_COST_PER_RADIUS,
   FIELD_SIZE,
   MAX_BULLETS,
   TICK_RATE,
@@ -12,6 +15,21 @@ import { mulberry32 } from './rng';
 import { ScriptRun, type ScriptContext } from './vm';
 
 const DT = 1 / TICK_RATE;
+
+function clampNum(v: number, min: number, max: number): number {
+  return v < min ? min : v > max ? max : v;
+}
+
+/** 1発あたりのエネルギーコスト (spawn と同じクランプ後の値で計算する) */
+export function bulletCost(dur: number, radius: number): number {
+  const d = clampNum(dur, 1, 1000);
+  const r = clampNum(radius, 0.1, 0.9);
+  return (
+    BULLET_COST_BASE +
+    BULLET_COST_PER_DUR * (d - 1) +
+    BULLET_COST_PER_RADIUS * Math.max(r - 0.4, 0)
+  );
+}
 const CULL_BOUND = FIELD_SIZE / 2 + 10;
 const BULLET_TTL_TICKS = TICK_RATE * 60;
 /** 衝突判定の空間ハッシュのセルサイズ (最大弾半径×2 より大きいこと) */
@@ -73,6 +91,65 @@ export class BulletEngine {
 
   get aliveCount(): number {
     return this.alive;
+  }
+
+  /** 指定オーナーの生存弾数 (同時存在弾数上限の判定用) */
+  aliveOwned(owner: string): number {
+    let n = 0;
+    for (const b of this.bullets) {
+      if (b.alive && b.owner === owner) n++;
+    }
+    return n;
+  }
+
+  /**
+   * スクリプトの総エネルギーコストを空実行で算出する。
+   * 実際の発射と同じシード・照準を使うため、乱数分岐があっても
+   * 実際に生成される弾列と正確に一致する。
+   * @returns コスト。構文エラーや暴走時は null
+   */
+  estimateCost(
+    source: string,
+    seed: number,
+    dirRad: number,
+    origin: () => Vec2,
+    targetPos: () => Vec2 | null = () => null,
+  ): number | null {
+    let program = this.compiled.get(source);
+    if (!program) {
+      try {
+        program = parse(source);
+      } catch {
+        return null;
+      }
+      this.compiled.set(source, program);
+    }
+    let cost = 0;
+    const dirDeg = dirRad * RAD_TO_DEG;
+    const ctx: ScriptContext = {
+      dir: dirDeg,
+      t: 0,
+      random: mulberry32(seed),
+      fire: (_angle, _speed, dur, radius) => {
+        cost += bulletCost(dur, radius);
+      },
+      aim: () => {
+        const tp = targetPos();
+        if (!tp) return dirDeg;
+        const p = origin();
+        return Math.atan2(tp.y - p.y, tp.x - p.x) * RAD_TO_DEG;
+      },
+      tdist: () => {
+        const tp = targetPos();
+        if (!tp) return -1;
+        const p = origin();
+        return Math.hypot(tp.x - p.x, tp.y - p.y);
+      },
+    };
+    const run = new ScriptRun(program, ctx);
+    // wait を含めて最大60秒ぶんを一気に空回しする
+    for (let i = 0; i < TICK_RATE * 60 && !run.done; i++) run.tick();
+    return cost;
   }
 
   get runCount(): number {

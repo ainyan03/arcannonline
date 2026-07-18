@@ -1,5 +1,7 @@
 // 自機のシミュレーション。描画に依存しない純粋な演算 (2D 座標系)。
 import {
+  ENERGY_MAX,
+  ENERGY_REGEN_PER_SEC,
   FIELD_SIZE,
   INVULN_MS,
   MAX_HP,
@@ -20,6 +22,8 @@ export class LocalPlayerSim {
   hp = MAX_HP;
   /** この時刻まで無敵 (リスポーン直後) */
   invulnUntil = 0;
+  /** 発射コスト用エネルギー (時間回復) */
+  energy = ENERGY_MAX;
 
   private readonly vel: Vec2 = { x: 0, y: 0 };
   private seq = 0;
@@ -47,6 +51,7 @@ export class LocalPlayerSim {
     this.pos.x = clamp(x, -BOUND, BOUND);
     this.pos.y = clamp(y, -BOUND, BOUND);
     this.hp = MAX_HP;
+    this.energy = ENERGY_MAX;
     this.invulnUntil = now + INVULN_MS;
     this.target = null;
   }
@@ -59,8 +64,16 @@ export class LocalPlayerSim {
     };
   }
 
+  /** エネルギーを消費する。足りなければ消費せず false を返す */
+  trySpendEnergy(cost: number): boolean {
+    if (this.energy < cost) return false;
+    this.energy -= cost;
+    return true;
+  }
+
   /** @returns 位置または向きが変化したか */
   update(dt: number, move: Vec2): boolean {
+    this.energy = Math.min(this.energy + ENERGY_REGEN_PER_SEC * dt, ENERGY_MAX);
     let mx = move.x;
     let my = move.y;
     if (mx !== 0 || my !== 0) {

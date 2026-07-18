@@ -7,9 +7,11 @@ import {
   DEFAULT_SCRIPT_ID,
 } from '../../../shared/src/danmaku-scripts';
 import {
+  ENERGY_MAX,
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
   MAX_HP,
+  MAX_OWN_BULLETS,
   MAX_SCRIPT_SRC_LEN,
   STATE_INTERVAL_MS,
   TICK_MS,
@@ -420,16 +422,32 @@ export class Game {
   private fire(): void {
     const now = performance.now();
     if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
-    this.lastFireAt = now;
     const source =
       this.scriptId === 'custom'
         ? this.customSource
         : (DANMAKU_SCRIPTS[this.scriptId]?.source ?? null);
     if (!source) return;
+
+    const seed = (Math.random() * 0x100000000) >>> 0;
+    const targetResolver = this.makeTargetResolver(this.targetId ?? undefined);
+
+    // 発射ゲート1: 自分の同時存在弾数上限
+    if (this.engine.aliveOwned(this.room.selfId) >= MAX_OWN_BULLETS) return;
+    // 発射ゲート2: エネルギー。総コストを同シードの空実行で算出して一括消費
+    const cost = this.engine.estimateCost(
+      source,
+      seed,
+      this.player.heading,
+      () => this.player.pos,
+      targetResolver,
+    );
+    if (cost === null || !this.player.trySpendEnergy(cost)) return;
+
+    this.lastFireAt = now;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
       script: this.scriptId,
-      seed: (Math.random() * 0x100000000) >>> 0,
+      seed,
       x: this.player.pos.x,
       y: this.player.pos.y,
       dir: this.player.heading,
@@ -709,18 +727,42 @@ export class Game {
     this.room.broadcastState(this.player.makeState());
   }
 
+  /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
+  private estimateSelectedCost(): number | null {
+    const source =
+      this.scriptId === 'custom'
+        ? this.customSource
+        : (DANMAKU_SCRIPTS[this.scriptId]?.source ?? null);
+    if (!source) return null;
+    return this.engine.estimateCost(
+      source,
+      1,
+      this.player.heading,
+      () => this.player.pos,
+      this.makeTargetResolver(this.targetId ?? undefined),
+    );
+  }
+
   private updateHud(): void {
     const scriptName =
       this.scriptId === 'custom'
         ? '自作スクリプト'
         : (DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId);
     this.fireBtn.setScriptName(scriptName);
+    const estCost = this.estimateSelectedCost();
+    const ownBullets = this.engine.aliveOwned(this.room.selfId);
+    this.fireBtn.setEnabled(
+      estCost !== null &&
+        this.player.energy >= estCost &&
+        ownBullets < MAX_OWN_BULLETS,
+    );
     const targetName = this.targetId
       ? (this.remotes.get(this.targetId)?.sim.name ?? '?')
       : 'なし (クリックで指定)';
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
-      `HP: ${this.player.hp}/${MAX_HP}\n` +
+      `HP: ${this.player.hp}/${MAX_HP}  EN: ${Math.floor(this.player.energy)}/${ENERGY_MAX}` +
+      ` (コスト目安 ${estCost === null ? '-' : Math.ceil(estCost)})\n` +
       `relays: ${this.room.relayStatus}\n` +
       `peers: ${this.room.peerCount}\n` +
       `ice: ${iceSummary()}\n` +

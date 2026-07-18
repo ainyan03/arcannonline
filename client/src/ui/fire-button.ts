@@ -7,9 +7,11 @@ export class FireButtonUI {
   onCycleScript?: () => void;
 
   private readonly chip: HTMLElement;
+  private readonly btn: HTMLElement;
 
   constructor(container: HTMLElement) {
     const btn = document.createElement('div');
+    this.btn = btn;
     btn.className = 'fire-btn';
     btn.textContent = '◎';
     container.appendChild(btn);
@@ -45,5 +47,10 @@ export class FireButtonUI {
 
   setScriptName(name: string): void {
     this.chip.textContent = `▶ ${name}`;
+  }
+
+  /** エネルギー不足などで発射できない時に見た目を無効化する */
+  setEnabled(enabled: boolean): void {
+    this.btn.classList.toggle('disabled', !enabled);
   }
 }

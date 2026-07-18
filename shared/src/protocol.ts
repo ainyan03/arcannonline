@@ -131,6 +131,21 @@ export const MAX_HP = 100;
 /** リスポーン後の無敵時間 */
 export const INVULN_MS = 2_000;
 
+// --- エネルギー (発射コスト) ----------------------------------------------
+// スクリプトの総コストは発射時に同じシードで空実行して算出し、一括消費する。
+// 消費判定は撃つ本人のクライアントのみが行う (自己申告制と同じ思想)。
+
+export const ENERGY_MAX = 200;
+export const ENERGY_REGEN_PER_SEC = 15;
+
+/** 1発あたりのコスト係数: base + perDur×(耐久-1) + perRadius×max(半径-0.4, 0) */
+export const BULLET_COST_BASE = 0.5;
+export const BULLET_COST_PER_DUR = 0.5;
+export const BULLET_COST_PER_RADIUS = 2;
+
+/** 自分の弾の同時存在数上限 (エネルギーと併用の安全弁) */
+export const MAX_OWN_BULLETS = 300;
+
 /**
  * 弾幕の発射イベント。弾の座標は送らず、スクリプトIDとシードだけを同期して
  * 各クライアントが決定論的に再現演算する。at (epoch ms) から受信側が
