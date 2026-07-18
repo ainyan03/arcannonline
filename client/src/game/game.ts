@@ -21,6 +21,7 @@ import { iceSummary } from '../net/rtc-debug';
 import { BulletEngine } from '../sim/danmaku/engine';
 import { parse } from '../sim/danmaku/parser';
 import { ChatUI } from '../ui/chat';
+import { FireButtonUI } from '../ui/fire-button';
 import { ScriptEditorUI } from '../ui/script-editor';
 import { LocalPlayerSim } from '../sim/local-player';
 import { RemotePlayerSim } from '../sim/remote-player';
@@ -36,9 +37,9 @@ const SPAWN_RANGE = 30;
 /** この時間 state を受信しないリモートはゴーストとみなして除去する */
 const STALE_REMOTE_MS = 10_000;
 
-/** ダブルタップ判定: 2回目のタップがこの時間・距離以内 */
-const DOUBLE_TAP_MS = 350;
-const DOUBLE_TAP_PX = 30;
+/** タップ判定: この時間・移動量以内の単押しをタップとみなす (ドラッグと区別) */
+const TAP_MS = 400;
+const TAP_PX = 6;
 
 interface Remote {
   sim: RemotePlayerSim;
@@ -70,17 +71,18 @@ export class Game {
   private lastTickTime = performance.now();
   private scriptId = DEFAULT_SCRIPT_ID;
   private lastFireAt = 0;
-  private lastTapAt = 0;
-  private lastTapX = 0;
-  private lastTapY = 0;
+  private fireHeld = false;
   private downAt = 0;
   private downX = 0;
   private downY = 0;
+  private readonly activePointers = new Set<number>();
+  private gestureMulti = false;
   private targetId: string | null = null;
   private readonly targetRing: THREE.Mesh;
   private readonly projTmp = new THREE.Vector3();
   private readonly chat: ChatUI;
   private readonly editor: ScriptEditorUI;
+  private readonly fireBtn: FireButtonUI;
   private readonly hitFlash: HTMLElement;
   private customSource: string | null = null;
 
@@ -115,6 +117,14 @@ export class Game {
       this.room.broadcastChat(text);
       this.chat.addLine(this.name, text);
     };
+
+    // 仮想発射ボタン: 押している間はクールダウン毎に連射される
+    this.fireBtn = new FireButtonUI(container);
+    this.fireBtn.onHoldChange = (held) => {
+      this.fireHeld = held;
+      if (held) this.fire();
+    };
+    this.fireBtn.onCycleScript = () => this.cycleScript();
 
     this.editor = new ScriptEditorUI(container);
     this.editor.onApply = (source) => {
@@ -258,6 +268,9 @@ export class Game {
     if (this.player.update(dt, this.input.moveDir(this.camera.yaw))) {
       this.playerView.sync(this.player.pos.x, this.player.pos.y, this.player.heading);
     }
+
+    // 仮想発射ボタンの長押し連射 (クールダウンは fire() 側で効く)
+    if (this.fireHeld) this.fire();
 
     this.tickToNow(now);
     this.checkHits(now);
@@ -491,37 +504,45 @@ export class Game {
 
     const dom = this.world.renderer.domElement;
 
-    // ダブルタップ (ダブルクリック) した地点への自動移動。スマホ対応のため
-    // dblclick イベントではなく pointerdown 2連で自前判定する
+    // シングルタップ (ドラッグ・ピンチと区別した短い単押し):
+    //   プレイヤーに当たればターゲット指定/解除、地面ならその地点へ移動
     dom.addEventListener('pointerdown', (e) => {
+      this.activePointers.add(e.pointerId);
+      if (this.activePointers.size >= 2) this.gestureMulti = true;
       this.downAt = performance.now();
       this.downX = e.clientX;
       this.downY = e.clientY;
-
-      const isDouble =
-        this.downAt - this.lastTapAt < DOUBLE_TAP_MS &&
-        Math.hypot(e.clientX - this.lastTapX, e.clientY - this.lastTapY) <
-          DOUBLE_TAP_PX;
-      this.lastTapAt = this.downAt;
-      this.lastTapX = e.clientX;
-      this.lastTapY = e.clientY;
-      if (!isDouble) return;
-      // ダブルタップがプレイヤーに当たった場合は移動しない (ターゲット指定を優先)
-      if (this.pickRemoteAt(e.clientX, e.clientY, container)) return;
+    });
+    dom.addEventListener('pointerup', (e) => {
+      this.activePointers.delete(e.pointerId);
+      const wasMulti = this.gestureMulti;
+      if (this.activePointers.size === 0) this.gestureMulti = false;
+      if (wasMulti) return; // ピンチ操作の指離しはタップ扱いしない
+      const dt = performance.now() - this.downAt;
+      const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
+      if (dt > TAP_MS || moved > TAP_PX) return; // ドラッグ視点操作は除外
+      const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
+      if (hit) {
+        this.targetId = this.targetId === hit ? null : hit; // 再タップで解除
+        this.updateHud();
+        return;
+      }
       const ground = this.raycastGround(e.clientX, e.clientY, container);
       if (ground) this.player.setTarget(ground.x, ground.y);
     });
-
-    // 短い単押し (ドラッグと区別) = クリック: 他プレイヤーのターゲット指定/解除
-    dom.addEventListener('pointerup', (e) => {
-      const dt = performance.now() - this.downAt;
-      const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
-      if (dt > 400 || moved > 6) return; // ドラッグ視点操作は除外
-      const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
-      if (!hit) return;
-      this.targetId = this.targetId === hit ? null : hit; // 再クリックで解除
-      this.updateHud();
+    dom.addEventListener('pointercancel', (e) => {
+      this.activePointers.delete(e.pointerId);
+      if (this.activePointers.size === 0) this.gestureMulti = false;
     });
+  }
+
+  /** 発射スクリプトを次へ切り替える (仮想ボタン横のチップ用) */
+  private cycleScript(): void {
+    const ids = Object.keys(DANMAKU_SCRIPTS);
+    if (this.customSource) ids.push('custom');
+    const idx = ids.indexOf(this.scriptId);
+    this.scriptId = ids[(idx + 1) % ids.length];
+    this.updateHud();
   }
 
   /** 画面座標に一番近い他プレイヤーを拾う (しきい値以内)。ID を返す */
@@ -596,6 +617,7 @@ export class Game {
       this.scriptId === 'custom'
         ? '自作スクリプト'
         : (DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId);
+    this.fireBtn.setScriptName(scriptName);
     const targetName = this.targetId
       ? (this.remotes.get(this.targetId)?.sim.name ?? '?')
       : 'なし (クリックで指定)';
