@@ -1,11 +1,5 @@
-import {
-  DEFAULT_SIGNALING_PORT,
-  P2P_STATE_INTERVAL_MS,
-  POS_REPORT_INTERVAL_MS,
-  type Vec2,
-} from '../../../shared/src/protocol';
-import { PeerManager } from '../net/peer-manager';
-import { SignalingClient, type SignalingStatus } from '../net/signaling';
+import { STATE_INTERVAL_MS, type Vec2 } from '../../../shared/src/protocol';
+import { GameRoom } from '../net/room';
 import { FollowCamera } from './camera';
 import { Keyboard } from './input';
 import { LocalPlayer } from './local-player';
@@ -21,14 +15,11 @@ export class Game {
   private readonly input = new Keyboard();
   private readonly player: LocalPlayer;
   private readonly remotes = new Map<string, RemotePlayer>();
-  private readonly signaling = new SignalingClient();
-  private readonly peers: PeerManager;
+  private readonly room: GameRoom;
   private readonly hud: HTMLElement;
 
-  private serverStatus: SignalingStatus = 'connecting';
   private lastFrame = 0;
   private stateTimer = 0;
-  private posTimer = 0;
   private hudTimer = 0;
 
   constructor(container: HTMLElement, private readonly name: string) {
@@ -46,37 +37,33 @@ export class Game {
     this.hud.className = 'hud';
     container.appendChild(this.hud);
 
-    this.peers = new PeerManager(this.signaling);
-    this.peers.onPeerOpen = (info) => {
-      if (this.remotes.has(info.id)) return;
-      const remote = new RemotePlayer(info);
-      this.remotes.set(info.id, remote);
+    this.room = new GameRoom(name);
+    this.room.onProfile = (id, profile) => {
+      if (this.remotes.has(id)) return;
+      const remote = new RemotePlayer(profile.name);
+      this.remotes.set(id, remote);
       this.world.scene.add(remote.object);
+      this.updateHud();
     };
-    this.peers.onPeerClosed = (id) => {
+    this.room.onState = (id, state) => {
+      this.remotes.get(id)?.pushState(state);
+    };
+    this.room.onPeerLeave = (id) => {
       const remote = this.remotes.get(id);
       if (remote) {
         this.remotes.delete(id);
         this.world.scene.remove(remote.object);
       }
-    };
-    this.peers.onRemoteState = (id, msg) => {
-      this.remotes.get(id)?.pushState(msg);
-    };
-
-    this.signaling.onStatus = (s) => {
-      this.serverStatus = s;
       this.updateHud();
     };
-    this.signaling.onWelcome = () => this.updateHud();
 
     window.addEventListener('resize', () => {
       this.world.renderer.setSize(window.innerWidth, window.innerHeight);
       this.camera.resize(window.innerWidth / window.innerHeight);
     });
+    window.addEventListener('beforeunload', () => this.room.leave());
 
-    const url = `ws://${location.hostname}:${DEFAULT_SIGNALING_PORT}`;
-    this.signaling.connect(url, name, spawn);
+    this.updateHud();
   }
 
   start(): void {
@@ -96,15 +83,9 @@ export class Game {
     this.player.update(dt, this.input.moveDir(this.camera.yaw));
 
     this.stateTimer += dtMs;
-    if (this.stateTimer >= P2P_STATE_INTERVAL_MS) {
+    if (this.stateTimer >= STATE_INTERVAL_MS && this.room.peerCount > 0) {
       this.stateTimer = 0;
-      this.peers.broadcastState(this.player.makeState());
-    }
-
-    this.posTimer += dtMs;
-    if (this.posTimer >= POS_REPORT_INTERVAL_MS) {
-      this.posTimer = 0;
-      this.signaling.sendPos(this.player.pos);
+      this.room.broadcastState(this.player.makeState());
     }
 
     for (const remote of this.remotes.values()) remote.update();
@@ -120,10 +101,8 @@ export class Game {
   }
 
   private updateHud(): void {
-    const id = this.signaling.id ? this.signaling.id.slice(0, 8) : '--------';
     this.hud.textContent =
-      `${this.name} (${id})\n` +
-      `server: ${this.serverStatus}\n` +
-      `peers: ${this.peers.openCount}/${this.peers.totalCount} open`;
+      `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
+      `peers: ${this.room.peerCount}`;
   }
 }

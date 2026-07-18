@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import {
   FIELD_SIZE,
   PLAYER_SPEED,
-  type P2PStateMessage,
+  type StatePayload,
   type Vec2,
 } from '../../../shared/src/protocol';
 import { colorFromString, createAvatar } from './avatar';
@@ -40,9 +40,8 @@ export class LocalPlayer {
     return this.worldPosTmp.set(this.pos.x, 0, this.pos.y);
   }
 
-  makeState(): P2PStateMessage {
+  makeState(): StatePayload {
     return {
-      type: 'state',
       seq: this.seq++,
       x: this.pos.x,
       y: this.pos.y,

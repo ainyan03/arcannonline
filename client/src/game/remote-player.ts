@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { P2PStateMessage, PeerInfo } from '../../../shared/src/protocol';
+import type { StatePayload } from '../../../shared/src/protocol';
 import { colorFromString, createAvatar } from './avatar';
 
 /** 受信スナップショットをこの時間だけ遅らせて再生し、補間を効かせる */
@@ -26,13 +26,13 @@ export class RemotePlayer {
   private readonly buf: Snapshot[] = [];
   private lastSeq = -1;
 
-  constructor(readonly info: PeerInfo) {
-    this.object = createAvatar(colorFromString(info.name), info.name);
-    this.object.position.set(info.pos.x, 0, info.pos.y);
+  constructor(readonly name: string) {
+    this.object = createAvatar(colorFromString(name), name);
+    this.object.visible = false; // 最初の状態受信まで位置が不明なので隠す
   }
 
-  pushState(msg: P2PStateMessage): void {
-    if (msg.seq <= this.lastSeq) return; // 非順序チャネルの追い越しを破棄
+  pushState(msg: StatePayload): void {
+    if (msg.seq <= this.lastSeq) return; // 追い越し・重複を破棄
     this.lastSeq = msg.seq;
     this.buf.push({ t: performance.now(), x: msg.x, y: msg.y, h: msg.h });
     if (this.buf.length > 60) this.buf.shift();
@@ -44,6 +44,7 @@ export class RemotePlayer {
       this.buf.shift();
     }
     if (this.buf.length === 0) return;
+    this.object.visible = true;
 
     const a = this.buf[0];
     let x = a.x;
@@ -51,11 +52,7 @@ export class RemotePlayer {
     let h = a.h;
     if (this.buf.length >= 2) {
       const b = this.buf[1];
-      const k = THREE.MathUtils.clamp(
-        (renderTime - a.t) / (b.t - a.t),
-        0,
-        1,
-      );
+      const k = THREE.MathUtils.clamp((renderTime - a.t) / (b.t - a.t), 0, 1);
       x = THREE.MathUtils.lerp(a.x, b.x, k);
       y = THREE.MathUtils.lerp(a.y, b.y, k);
       h = lerpAngle(a.h, b.h, k);
