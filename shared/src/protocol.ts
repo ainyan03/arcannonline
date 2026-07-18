@@ -155,9 +155,15 @@ export interface FireEvent {
 /** 共有されるカスタムスクリプトソースの長さ上限 */
 export const MAX_SCRIPT_SRC_LEN = 4_000;
 
-/** 信頼チャネルのメッセージ。チャットも今後ここに追加する */
+/** 信頼チャネルのメッセージ */
 export type ReliableMessage =
   | { type: 'pex'; peers: string[] }
   | { type: 'sig'; env: SignalEnvelope }
   | { type: 'fire'; ev: FireEvent }
+  /**
+   * 弾の消滅通知 (被弾で消費した弾など)。弾は「発射イベントID f + その
+   * スクリプトが何発目に生成したか i」で全クライアント共通に特定できる
+   * (スクリプトは決定論的に同じ順序で弾を生成するため)
+   */
+  | { type: 'bkill'; f: string; i: number }
   | { type: 'chat'; text: string };

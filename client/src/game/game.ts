@@ -172,6 +172,8 @@ export class Game {
       }
     };
     this.room.onFire = (id, ev) => this.handleRemoteFire(id, ev);
+    this.room.onBulletKill = (fireId, spawnIdx) =>
+      this.engine.killByFire(fireId, spawnIdx);
     this.room.onChat = (id, text) => {
       const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
       this.chat.addLine(name, text, text.startsWith('* '));
@@ -312,7 +314,9 @@ export class Game {
       const rr = b.radius + pr;
       if (dx * dx + dy * dy > rr * rr) continue;
       const dead = this.player.takeHit(b.dur, now);
-      this.engine.killAt(i); // 当たった弾は消費する (自分の画面上のみ)
+      this.engine.killAt(i); // 当たった弾は消費する
+      // 他クライアントにも消滅を通知 (発射イベントID + 生成順で特定)
+      this.room.broadcastBulletKill(b.fireId, b.spawnIdx);
       this.flashHit();
       if (dead) {
         died = true;
@@ -392,6 +396,8 @@ export class Game {
       ev.dir,
       this.room.selfId,
       this.makeTargetResolver(ev.target),
+      0,
+      ev.id,
     );
     this.room.broadcastFire(ev);
   }
@@ -432,6 +438,7 @@ export class Game {
       fromId,
       this.makeTargetResolver(ev.target),
       catchup,
+      ev.id,
     );
   }
 

@@ -45,6 +45,12 @@ export class GameRoom {
     this.mesh.onChat = fn;
   }
 
+  set onBulletKill(
+    fn: ((fireId: string, spawnIdx: number) => void) | undefined,
+  ) {
+    this.mesh.onBulletKill = fn;
+  }
+
   get peerCount(): number {
     return this.mesh.openCount;
   }
@@ -69,6 +75,10 @@ export class GameRoom {
 
   broadcastChat(text: string): void {
     this.mesh.broadcastChat(text);
+  }
+
+  broadcastBulletKill(fireId: string, spawnIdx: number): void {
+    this.mesh.broadcastBulletKill(fireId, spawnIdx);
   }
 
   /** 回復要求: リレー再接続とプレゼンス再発行 (ウォッチドッグから呼ばれる) */

@@ -39,6 +39,7 @@ export class Mesh {
   onState?: (id: string, state: StatePayload) => void;
   onFire?: (id: string, ev: FireEvent) => void;
   onChat?: (id: string, text: string) => void;
+  onBulletKill?: (fireId: string, spawnIdx: number) => void;
 
   private readonly peers = new Map<string, PeerEntry>();
   private readonly presenceSeen = new Map<string, number>();
@@ -88,6 +89,14 @@ export class Mesh {
   broadcastChat(text: string): void {
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendReliable({ type: 'chat', text });
+    }
+  }
+
+  broadcastBulletKill(fireId: string, spawnIdx: number): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) {
+        e.peer.sendReliable({ type: 'bkill', f: fireId, i: spawnIdx });
+      }
     }
   }
 
@@ -246,6 +255,9 @@ export class Mesh {
       }
       case 'fire':
         this.onFire?.(fromId, msg.ev);
+        break;
+      case 'bkill':
+        this.onBulletKill?.(String(msg.f), Number(msg.i));
         break;
       case 'chat':
         this.onChat?.(fromId, String(msg.text).slice(0, 200));

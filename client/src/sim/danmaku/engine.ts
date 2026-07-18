@@ -30,6 +30,10 @@ export interface Bullet {
   radius: number;
   owner: string;
   ttl: number;
+  /** 発射イベントID。spawnIdx と合わせてクライアント間で弾を特定する */
+  fireId: string;
+  /** そのスクリプト実行が何発目に生成した弾か */
+  spawnIdx: number;
 }
 
 interface RunEntry {
@@ -69,6 +73,7 @@ export class BulletEngine {
     owner: string,
     targetPos: () => Vec2 | null = () => null,
     catchupTicks = 0,
+    fireId = '',
   ): void {
     let program = this.compiled.get(source);
     if (!program) {
@@ -82,6 +87,7 @@ export class BulletEngine {
     }
 
     let pendingAdvance = 0; // 追いつき再生中に生成された弾を進める tick 数
+    let spawnCounter = 0;
     const dirDeg = dirRad * RAD_TO_DEG;
     const ctx: ScriptContext = {
       dir: dirDeg,
@@ -89,7 +95,10 @@ export class BulletEngine {
       random: mulberry32(seed),
       fire: (angleDeg, speed, dur, radius) => {
         const p = origin();
-        this.spawn(p.x, p.y, angleDeg, speed, dur, radius, owner, pendingAdvance);
+        this.spawn(
+          p.x, p.y, angleDeg, speed, dur, radius, owner, pendingAdvance,
+          fireId, spawnCounter++,
+        );
       },
       aim: () => {
         const tp = targetPos();
@@ -157,6 +166,8 @@ export class BulletEngine {
     radius: number,
     owner: string,
     advanceTicks: number,
+    fireId: string,
+    spawnIdx: number,
   ): void {
     if (this.alive >= MAX_BULLETS) return;
     const a = angleDeg * DEG_TO_RAD;
@@ -173,6 +184,8 @@ export class BulletEngine {
       radius: Math.min(Math.max(radius, 0.1), 0.9),
       owner,
       ttl: BULLET_TTL_TICKS - advanceTicks,
+      fireId,
+      spawnIdx,
     };
     const slot = this.freeSlots.pop();
     if (slot !== undefined) {
@@ -186,6 +199,19 @@ export class BulletEngine {
   /** 外部からの弾の消費 (被弾処理など)。index は bullets 配列上の位置 */
   killAt(index: number): void {
     this.kill(index);
+  }
+
+  /** 発射イベントID + 生成順で弾を特定して消す (他クライアントからの消滅通知) */
+  killByFire(fireId: string, spawnIdx: number): void {
+    if (!fireId) return;
+    const bs = this.bullets;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      if (b.alive && b.spawnIdx === spawnIdx && b.fireId === fireId) {
+        this.kill(i);
+        return;
+      }
+    }
   }
 
   private kill(index: number): void {
