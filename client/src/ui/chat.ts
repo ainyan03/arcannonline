@@ -1,6 +1,9 @@
 const MAX_LINES = 8;
 
-/** 画面左下のチャット。Enter で入力欄を開き、Enter 送信 / Escape で閉じる。 */
+/**
+ * チャット。入力枠は画面最下部に常設し、自由に編集して Enter (確定) で送信する。
+ * Enter キー (ゲーム側) で入力欄へフォーカス、Escape でゲーム操作へ戻る。
+ */
 export class ChatUI {
   onSend?: (text: string) => void;
 
@@ -16,7 +19,7 @@ export class ChatUI {
     this.input.className = 'chat-input';
     this.input.type = 'text';
     this.input.maxLength = 200;
-    this.input.placeholder = 'メッセージ… (Enter送信 / Esc閉じる)';
+    this.input.placeholder = 'チャット… (Enterで送信)';
     root.append(this.log, this.input);
     container.appendChild(root);
 
@@ -24,27 +27,25 @@ export class ChatUI {
       e.stopPropagation();
       if (e.key === 'Enter') {
         const text = this.input.value.trim();
-        if (text) this.onSend?.(text);
-        this.close();
+        if (text) {
+          this.onSend?.(text);
+          this.input.value = '';
+        }
+        this.input.blur(); // 送信後はゲーム操作へ戻す
       } else if (e.key === 'Escape') {
-        this.close();
+        this.input.blur();
       }
     });
   }
 
+  /** 入力欄にフォーカスがあるか (ゲーム側のキー処理の抑止判定に使える) */
   get isOpen(): boolean {
-    return this.input.style.display === 'block';
+    return document.activeElement === this.input;
   }
 
+  /** 入力欄へフォーカスする */
   open(): void {
-    this.input.style.display = 'block';
     this.input.focus();
-  }
-
-  close(): void {
-    this.input.value = '';
-    this.input.style.display = 'none';
-    this.input.blur();
   }
 
   addLine(name: string, text: string, system = false): void {

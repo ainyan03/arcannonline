@@ -9,7 +9,7 @@ export function colorFromString(s: string): THREE.Color {
   return new THREE.Color().setHSL((h % 360) / 360, 0.6, 0.55);
 }
 
-function createNameSprite(name: string): THREE.Sprite {
+export function createNameSprite(name: string): THREE.Sprite {
   const canvas = document.createElement('canvas');
   canvas.width = 256;
   canvas.height = 64;
@@ -33,10 +33,11 @@ function createNameSprite(name: string): THREE.Sprite {
 }
 
 /**
- * キャラクターの見た目。カプセル胴体＋進行方向を示すノーズ＋頭上の名前。
+ * キャラクターの胴体 (カプセル＋進行方向を示すノーズ)。
  * rotation.y = -heading で 2D の進行方向 (rad) と描画上の向きが一致する。
+ * 名前や HP バーなど回転させたくない要素は、この外側 (親グループ) に付けること。
  */
-export function createAvatar(color: THREE.Color, name: string): THREE.Group {
+export function createBody(color: THREE.Color): THREE.Group {
   const group = new THREE.Group();
 
   const body = new THREE.Mesh(
@@ -54,6 +55,5 @@ export function createAvatar(color: THREE.Color, name: string): THREE.Group {
   nose.position.set(0.6, 1.3, 0);
   group.add(nose);
 
-  group.add(createNameSprite(name));
   return group;
 }

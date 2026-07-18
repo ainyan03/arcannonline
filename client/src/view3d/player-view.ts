@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { colorFromString, createAvatar } from './avatar';
+import { colorFromString, createBody, createNameSprite } from './avatar';
 
 /**
  * プレイヤー1体の 3D 表示。sim 層の姿勢 (2D 座標 + 向き) を受け取って
@@ -8,11 +8,17 @@ import { colorFromString, createAvatar } from './avatar';
 export class PlayerView {
   readonly object: THREE.Group;
 
+  private readonly body: THREE.Group;
   private readonly hpBar: THREE.Sprite;
   private readonly hpColor = new THREE.Color();
 
   constructor(name: string) {
-    this.object = createAvatar(colorFromString(name), name);
+    // ルートは位置のみを持ち、向き (rotation) は胴体だけに適用する。
+    // 名前・HPバーはルート直下に置き、自機の向きで位置が回らないようにする
+    this.object = new THREE.Group();
+    this.body = createBody(colorFromString(name));
+    this.object.add(this.body);
+    this.object.add(createNameSprite(name));
 
     // 頭上のHPバー (名前の下)。Sprite は常にカメラを向く
     const bg = new THREE.Sprite(
@@ -35,7 +41,7 @@ export class PlayerView {
   sync(x: number, y: number, heading: number, visible = true): void {
     this.object.visible = visible;
     this.object.position.set(x, 0, y);
-    this.object.rotation.y = -heading;
+    this.body.rotation.y = -heading;
   }
 
   /** HP 割合 (0..1) をバーに反映する */
