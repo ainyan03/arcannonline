@@ -1,26 +1,37 @@
+// オーケストレータ: sim (演算) / view3d (描画) / net (通信) を配線する。
+// sim と net は描画に依存しないため、表示部を差し替えたクライアント
+// (2D 描画・ヘッドレス bot 等) は view3d と本ファイル相当を置き換えれば作れる。
+import * as THREE from 'three';
 import { STATE_INTERVAL_MS, type Vec2 } from '../../../shared/src/protocol';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
-import { FollowCamera } from './camera';
+import { LocalPlayerSim } from '../sim/local-player';
+import { RemotePlayerSim } from '../sim/remote-player';
+import { FollowCamera } from '../view3d/camera';
+import { PlayerView } from '../view3d/player-view';
+import { createWorld, type World } from '../view3d/world';
 import { Keyboard } from './input';
-import { LocalPlayer } from './local-player';
-import { RemotePlayer } from './remote-player';
-import { createWorld, type World } from './world';
 
 const SPAWN_RANGE = 30;
 
 /** この時間 state を受信しないリモートはゴーストとみなして除去する */
 const STALE_REMOTE_MS = 10_000;
 
-/** ゲーム全体のオーケストレーション: 描画ループ・入力・ネットワーク送受信。 */
+interface Remote {
+  sim: RemotePlayerSim;
+  view: PlayerView;
+}
+
 export class Game {
   private readonly world: World;
   private readonly camera: FollowCamera;
   private readonly input = new Keyboard();
-  private readonly player: LocalPlayer;
-  private readonly remotes = new Map<string, RemotePlayer>();
+  private readonly player: LocalPlayerSim;
+  private readonly playerView: PlayerView;
+  private readonly remotes = new Map<string, Remote>();
   private readonly room: GameRoom;
   private readonly hud: HTMLElement;
+  private readonly worldPosTmp = new THREE.Vector3();
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -36,8 +47,10 @@ export class Game {
       x: (Math.random() * 2 - 1) * SPAWN_RANGE,
       y: (Math.random() * 2 - 1) * SPAWN_RANGE,
     };
-    this.player = new LocalPlayer(spawn, name);
-    this.world.scene.add(this.player.object);
+    this.player = new LocalPlayerSim(spawn, name);
+    this.playerView = new PlayerView(name);
+    this.playerView.sync(spawn.x, spawn.y, 0);
+    this.world.scene.add(this.playerView.object);
 
     this.hud = document.createElement('div');
     this.hud.className = 'hud';
@@ -48,27 +61,28 @@ export class Game {
     // 既存プレイヤーの位置も即座に受け取れるようにする
     this.room.onPeerJoin = () => this.sendStateNow();
     this.room.onState = (id, state) => {
+      const now = performance.now();
       let remote = this.remotes.get(id);
       if (!remote) {
-        remote = new RemotePlayer(state.n);
+        remote = {
+          sim: new RemotePlayerSim(state.n, now),
+          view: new PlayerView(state.n),
+        };
+        remote.view.sync(state.x, state.y, state.h, false);
         this.remotes.set(id, remote);
-        this.world.scene.add(remote.object);
+        this.world.scene.add(remote.view.object);
         this.updateHud();
       }
-      remote.pushState(state);
+      remote.sim.push(state, now);
       // バックグラウンドタブは setInterval が最悪 1回/分 まで間引かれる
       // (Chrome の intensive throttling)。受信イベントは間引かれないため、
       // 相手からの受信を契機に生存応答を返して presence を維持する
-      if (performance.now() - this.lastSentAt > 1000) {
+      if (now - this.lastSentAt > 1000) {
         this.sendStateNow();
       }
     };
     this.room.onPeerLeave = (id) => {
-      const remote = this.remotes.get(id);
-      if (remote) {
-        this.remotes.delete(id);
-        this.world.scene.remove(remote.object);
-      }
+      this.removeRemote(id);
       this.updateHud();
     };
 
@@ -87,6 +101,9 @@ export class Game {
     });
 
     this.updateHud();
+
+    // 開発時のコンソール調査用ハンドル (本体ロジックからは参照しない)
+    (window as unknown as { __blt?: unknown }).__blt = this;
   }
 
   start(): void {
@@ -106,33 +123,26 @@ export class Game {
       this.updateHud();
     }, STATE_INTERVAL_MS);
 
-    // 回復ウォッチドッグ: ピアを長時間発見できない場合はルームへ入り直す。
-    // リレーの不調・レート制限・ゴーストピアからの自動回復手段
+    // 回復ウォッチドッグ: ピアを長時間発見できない場合は回復を要求する。
     // (間隔は指数バックオフで最大5分まで延ばし、リレーへの負荷増を防ぐ)
     window.setInterval(() => {
-      // 生きているピアはこちらの送信への応答 (受信駆動 keepalive) が必ず
-      // 1秒以内に返る。長時間無通信のリモートは死んだ接続の残骸とみなして
-      // 除去する (スマホの画面ロック等で leave なしに消えたゴースト対策)
+      // 長時間無通信のリモートは死んだ接続の残骸とみなして除去する
+      const now = performance.now();
       for (const [id, remote] of this.remotes) {
-        if (performance.now() - remote.lastSeenAt > STALE_REMOTE_MS) {
-          console.debug(`[game] remove stale remote ${id} (${remote.name})`);
-          this.remotes.delete(id);
-          this.world.scene.remove(remote.object);
+        if (now - remote.sim.lastSeenAt > STALE_REMOTE_MS) {
+          console.debug(`[game] remove stale remote ${id.slice(0, 8)}`);
+          this.removeRemote(id);
         }
       }
 
       if (this.room.peerCount > 0) {
-        this.lastPeerAt = performance.now();
+        this.lastPeerAt = now;
         this.rejoinBackoffMs = 20_000;
         return;
       }
-      if (performance.now() - this.lastPeerAt > this.rejoinBackoffMs) {
-        this.lastPeerAt = performance.now();
+      if (now - this.lastPeerAt > this.rejoinBackoffMs) {
+        this.lastPeerAt = now;
         this.rejoinBackoffMs = Math.min(this.rejoinBackoffMs * 2, 300_000);
-        for (const remote of this.remotes.values()) {
-          this.world.scene.remove(remote.object);
-        }
-        this.remotes.clear();
         this.room.rejoin();
       }
     }, 5_000);
@@ -143,11 +153,18 @@ export class Game {
     this.lastFrame = now;
     const dt = dtMs / 1000;
 
-    this.player.update(dt, this.input.moveDir(this.camera.yaw));
+    if (this.player.update(dt, this.input.moveDir(this.camera.yaw))) {
+      this.playerView.sync(this.player.pos.x, this.player.pos.y, this.player.heading);
+    }
 
-    for (const remote of this.remotes.values()) remote.update();
+    for (const remote of this.remotes.values()) {
+      const s = remote.sim.sample(now);
+      if (s.visible) remote.view.sync(s.x, s.y, s.h);
+    }
 
-    this.camera.update(this.player.worldPos);
+    this.camera.update(
+      this.worldPosTmp.set(this.player.pos.x, 0, this.player.pos.y),
+    );
     this.world.renderer.render(this.world.scene, this.camera.camera);
 
     this.hudTimer += dtMs;
@@ -155,6 +172,13 @@ export class Game {
       this.hudTimer = 0;
       this.updateHud();
     }
+  }
+
+  private removeRemote(id: string): void {
+    const remote = this.remotes.get(id);
+    if (!remote) return;
+    this.remotes.delete(id);
+    this.world.scene.remove(remote.view.object);
   }
 
   private sendStateNow(): void {
