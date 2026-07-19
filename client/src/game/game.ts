@@ -161,7 +161,7 @@ export class Game {
     leaveBtn.className = 'leave-btn';
     leaveBtn.textContent = '入り直す';
     leaveBtn.addEventListener('pointerdown', () => {
-      sessionStorage.removeItem('blt-autojoin');
+      sessionStorage.removeItem('arcn-autojoin');
       this.room.leave();
       location.reload();
     });
@@ -203,7 +203,7 @@ export class Game {
       return null;
     };
     // 過去に適用したカスタムスクリプトを復元 (保存時に構文検証済み)
-    const savedScript = localStorage.getItem('blt-custom-script');
+    const savedScript = localStorage.getItem('arcn-custom-script');
     if (savedScript) this.customSource = savedScript;
 
     // ターゲット指定中の相手の足元に表示するリング
@@ -277,8 +277,8 @@ export class Game {
     this.updateHud();
 
     // 開発時のコンソール調査用ハンドル (本体ロジックからは参照しない)
-    (window as unknown as { __blt?: unknown }).__blt = this;
-    (window as unknown as { __bltBench?: unknown }).__bltBench = benchEngine;
+    (window as unknown as { __arc?: unknown }).__arc = this;
+    (window as unknown as { __arcBench?: unknown }).__arcBench = benchEngine;
   }
 
   start(): void {

@@ -1,8 +1,8 @@
 import type { Appearance } from '../../../shared/src/protocol';
 
-const NAME_KEY = 'blt-name';
-const AUTOJOIN_KEY = 'blt-autojoin';
-const APPEARANCE_KEY = 'blt-appearance';
+const NAME_KEY = 'arcn-name';
+const AUTOJOIN_KEY = 'arcn-autojoin';
+const APPEARANCE_KEY = 'arcn-appearance';
 
 export interface JoinResult {
   name: string;
@@ -43,7 +43,11 @@ export function showJoinOverlay(): Promise<JoinResult> {
     panel.className = 'panel';
 
     const title = document.createElement('h1');
-    title.textContent = '弾幕フィールド試作';
+    title.textContent = 'ArcannonLine';
+
+    const tagline = document.createElement('div');
+    tagline.className = 'tagline';
+    tagline.textContent = '魔法弾幕オンライン対戦（試作）';
 
     const input = document.createElement('input');
     input.type = 'text';
@@ -95,7 +99,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
       if (e.key === 'Enter') submit();
     });
 
-    panel.append(title, input, row, button);
+    panel.append(title, tagline, input, row, button);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     input.focus();

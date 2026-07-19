@@ -25,7 +25,7 @@ export const STATE_INTERVAL_MS = 66;
 export const MAX_PEERS = 32;
 
 /** ルームトピック。マップ分割する際は ROOM_NAME を増やす */
-export const APP_ID = 'lovyan-blt-proto';
+export const APP_ID = 'arcannonline';
 export const ROOM_NAME = 'field-1';
 
 /** プレゼンス(在室通知)の発行間隔 */

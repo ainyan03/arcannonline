@@ -8,7 +8,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 
 const NOSTR_KIND = 20808; // ephemeral 範囲内の本アプリ固有値
-const SUB_ID = 'blt';
+const SUB_ID = 'arcn';
 const RECONNECT_BASE_MS = 3_000;
 const RECONNECT_MAX_MS = 60_000;
 const SEEN_MAX = 2_000;

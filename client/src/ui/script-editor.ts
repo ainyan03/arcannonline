@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'blt-custom-script';
+const STORAGE_KEY = 'arcn-custom-script';
 
 const TEMPLATE = `// 自作弾幕スクリプト (E で開閉)
 // fire(角度deg, 速度, 耐久度, 半径, 残存時間秒) / wait(tick) / loop(n){}
