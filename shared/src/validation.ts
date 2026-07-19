@@ -3,9 +3,13 @@ import {
   MAX_HP,
   MAX_PEERS,
   MAX_SCRIPT_SRC_LEN,
+  NPC_MAX_HP,
+  NPCS_PER_PEER,
   type Appearance,
   type FireEvent,
   type NostrContent,
+  type NpcStatePayload,
+  type RealtimeMessage,
   type ReliableMessage,
   type SignalEnvelope,
   type SignalPayload,
@@ -15,6 +19,7 @@ import {
 type JsonRecord = Record<string, unknown>;
 
 const PEER_ID_RE = /^[0-9a-f]{64}$/;
+const NPC_ID_RE = /^[0-9a-f]{64}:npc:[0-3]$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MAX_SIGNAL_SDP_LEN = 64_000;
 const MAX_SIGNAL_ID_LEN = 128;
@@ -39,6 +44,14 @@ function shortString(value: unknown, max: number): value is string {
 
 export function isPeerId(value: unknown): value is string {
   return typeof value === 'string' && PEER_ID_RE.test(value);
+}
+
+export function isNpcId(value: unknown): value is string {
+  return typeof value === 'string' && NPC_ID_RE.test(value);
+}
+
+export function npcBelongsToPeer(npcId: string, peerId: string): boolean {
+  return isPeerId(peerId) && npcId.startsWith(`${peerId}:npc:`);
 }
 
 export function parseAppearance(value: unknown): Appearance | undefined {
@@ -74,6 +87,51 @@ export function parseStatePayload(value: unknown): StatePayload | null {
     hp: v.hp,
     ap,
   };
+}
+
+export function parseNpcStatePayload(value: unknown): NpcStatePayload | null {
+  const v = record(value);
+  if (!v || !isNpcId(v.id) || !integer(v.seq, 0, Number.MAX_SAFE_INTEGER)) return null;
+  if (!finite(v.x, -FIELD_SIZE, FIELD_SIZE) || !finite(v.y, -FIELD_SIZE, FIELD_SIZE)) return null;
+  if (!finite(v.vx, -32, 32) || !finite(v.vy, -32, 32) || !finite(v.h, -Math.PI * 2, Math.PI * 2)) {
+    return null;
+  }
+  if (!finite(v.hp, 0, NPC_MAX_HP) || !finite(v.ts, 0, 10_000_000_000_000)) return null;
+  if (!['spawn', 'wander', 'chase', 'attack', 'dead'].includes(String(v.mode))) return null;
+  return {
+    id: v.id,
+    seq: v.seq,
+    x: v.x,
+    y: v.y,
+    vx: v.vx,
+    vy: v.vy,
+    h: v.h,
+    hp: v.hp,
+    mode: v.mode as NpcStatePayload['mode'],
+    ts: v.ts,
+  };
+}
+
+export function parseRealtimeMessage(value: unknown): RealtimeMessage | null {
+  const v = record(value);
+  if (!v) return null;
+  // 旧クライアントのタグなしplayer stateも移行期間中は受理する。
+  if (v.type === undefined) {
+    const state = parseStatePayload(value);
+    return state ? { type: 'state', state } : null;
+  }
+  if (v.type === 'state') {
+    const state = parseStatePayload(v.state);
+    return state ? { type: 'state', state } : null;
+  }
+  if (v.type === 'npcs') {
+    if (!Array.isArray(v.states) || v.states.length > NPCS_PER_PEER) return null;
+    const states = v.states.map(parseNpcStatePayload);
+    return states.every((state): state is NpcStatePayload => state !== null)
+      ? { type: 'npcs', states }
+      : null;
+  }
+  return null;
 }
 
 function parseSignalPayload(value: unknown): SignalPayload | null {
@@ -125,8 +183,9 @@ export function parseFireEvent(value: unknown): FireEvent | null {
   if (!shortString(v.script, 64) || v.script.length === 0 || !integer(v.seed, 0, 0xffff_ffff)) return null;
   if (!finite(v.x, -FIELD_SIZE, FIELD_SIZE) || !finite(v.y, -FIELD_SIZE, FIELD_SIZE)) return null;
   if (!finite(v.dir, -Math.PI * 2, Math.PI * 2) || !finite(v.at, 0, 10_000_000_000_000)) return null;
-  if (v.target !== undefined && !isPeerId(v.target)) return null;
+  if (v.target !== undefined && !isPeerId(v.target) && !isNpcId(v.target)) return null;
   if (v.src !== undefined && !shortString(v.src, MAX_SCRIPT_SRC_LEN)) return null;
+  if (v.npc !== undefined && !isNpcId(v.npc)) return null;
   const hasTargetPos = v.tx !== undefined || v.ty !== undefined;
   if (hasTargetPos && (!finite(v.tx, -FIELD_SIZE, FIELD_SIZE) || !finite(v.ty, -FIELD_SIZE, FIELD_SIZE))) {
     return null;
@@ -142,6 +201,7 @@ export function parseFireEvent(value: unknown): FireEvent | null {
     target: v.target as string | undefined,
     tx: v.tx as number | undefined,
     ty: v.ty as number | undefined,
+    npc: v.npc as string | undefined,
     src: v.src as string | undefined,
   };
 }

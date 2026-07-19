@@ -7,17 +7,24 @@ import {
   DEFAULT_SCRIPT_ID,
 } from '../../../shared/src/danmaku-scripts';
 import {
+  NPC_FIRE_SCRIPT_ID,
+  NPC_FIRE_SCRIPT_SOURCE,
+} from '../../../shared/src/npc-scripts';
+import {
   ENERGY_MAX,
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
   MAX_HP,
   MAX_SCRIPT_SRC_LEN,
+  NPC_STATE_INTERVAL_MS,
+  NPCS_PER_PEER,
   STATE_INTERVAL_MS,
   TICK_MS,
   type Appearance,
   type FireEvent,
   type Vec2,
 } from '../../../shared/src/protocol';
+import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
 import { benchEngine } from '../sim/danmaku/bench';
@@ -29,9 +36,17 @@ import { ScriptEditorUI } from '../ui/script-editor';
 import { StickUI } from '../ui/stick';
 import { LocalPlayerSim } from '../sim/local-player';
 import { RemotePlayerSim } from '../sim/remote-player';
+import {
+  LocalNpcSim,
+  NPC_HIT_RADIUS,
+  RemoteNpcSim,
+  type NpcAttack,
+  type NpcTarget,
+} from '../sim/npc';
 import { BulletView } from '../view3d/bullet-view';
 import { FollowCamera } from '../view3d/camera';
 import { EdgeMarkers, type MarkerTarget } from '../view3d/edge-markers';
+import { EnemyView } from '../view3d/enemy-view';
 import { Particles } from '../view3d/particles';
 import { PlayerView } from '../view3d/player-view';
 import { createWorld, type World } from '../view3d/world';
@@ -62,6 +77,17 @@ interface Remote {
   flashUntil: number;
 }
 
+interface LocalNpc {
+  sim: LocalNpcSim;
+  view: EnemyView;
+}
+
+interface RemoteNpc {
+  ownerId: string;
+  sim: RemoteNpcSim;
+  view: EnemyView;
+}
+
 export class Game {
   private readonly world: World;
   private readonly camera: FollowCamera;
@@ -69,6 +95,8 @@ export class Game {
   private readonly player: LocalPlayerSim;
   private readonly playerView: PlayerView;
   private readonly remotes = new Map<string, Remote>();
+  private readonly localNpcs: LocalNpc[] = [];
+  private readonly remoteNpcs = new Map<string, RemoteNpc>();
   private readonly room: GameRoom;
   private readonly hud: HTMLElement;
   private readonly engine = new BulletEngine();
@@ -89,6 +117,8 @@ export class Game {
   private lastPeerAt = performance.now();
   private rejoinBackoffMs = 20_000;
   private lastTickTime = performance.now();
+  private lastNpcUpdate = performance.now();
+  private lastNpcSentAt = 0;
   private scriptId = DEFAULT_SCRIPT_ID;
   private lastFireAt = 0;
   private fireHeld = false;
@@ -123,9 +153,12 @@ export class Game {
     this.world = createWorld(container);
     this.camera = new FollowCamera(this.world.renderer.domElement);
     this.bulletView = new BulletView(this.world.scene, (owner) => {
+      if (isNpcId(owner)) return { color: '#9b63da', name: 'ウィスプ' };
       const sim = this.remotes.get(owner)?.sim;
       return { color: sim?.ap?.c ?? null, name: sim?.name ?? owner };
     });
+    // 共通敵同士の弾は相殺させず、プレイヤーの弾とだけ干渉させる。
+    this.engine.areAllied = (a, b) => isNpcId(a) && isNpcId(b);
     this.particles = new Particles(this.world.scene);
     // 弾同士の相殺・被弾消費で弾けて消えるエフェクト (寿命切れ等では出さない)
     this.engine.onKill = (b, cause) => {
@@ -218,9 +251,20 @@ export class Game {
     this.world.scene.add(this.targetRing);
 
     this.room = new GameRoom();
+    const npcNow = performance.now();
+    for (let i = 0; i < NPCS_PER_PEER; i++) {
+      const sim = new LocalNpcSim(`${this.room.selfId}:npc:${i}`, npcNow);
+      const view = new EnemyView(sim.id, true);
+      view.sync(sim.pos.x, sim.pos.y, sim.heading);
+      this.localNpcs.push({ sim, view });
+      this.world.scene.add(view.object);
+    }
     // 接続確立の瞬間に1発送る: 新規参加者が、アイドル中(タイマー間引き中)の
     // 既存プレイヤーの位置も即座に受け取れるようにする
-    this.room.onPeerJoin = () => this.sendStateNow();
+    this.room.onPeerJoin = () => {
+      this.sendStateNow();
+      this.sendNpcsNow();
+    };
     this.room.onState = (id, state) => {
       const now = performance.now();
       let remote = this.remotes.get(id);
@@ -238,11 +282,42 @@ export class Game {
         this.updateHud();
       }
       remote.sim.push(state, now);
+      // 受信イベントはバックグラウンドタブでも届くため、担当NPCのAIも
+      // ここで進めてタイマー間引きによる停止を緩和する。
+      this.updateNpcsToNow(now);
       // バックグラウンドタブは setInterval が最悪 1回/分 まで間引かれる
       // (Chrome の intensive throttling)。受信イベントは間引かれないため、
       // 相手からの受信を契機に生存応答を返して presence を維持する
       if (now - this.lastSentAt > 1000) {
         this.sendStateNow();
+      }
+    };
+    this.room.onNpcs = (ownerId, states) => {
+      const now = performance.now();
+      const seen = new Set<string>();
+      for (const state of states) {
+        if (seen.has(state.id) || !npcBelongsToPeer(state.id, ownerId)) continue;
+        seen.add(state.id);
+        let npc = this.remoteNpcs.get(state.id);
+        const existed = npc !== undefined;
+        if (!npc) {
+          npc = {
+            ownerId,
+            sim: new RemoteNpcSim(state.id, now),
+            view: new EnemyView(state.id, false),
+          };
+          this.remoteNpcs.set(state.id, npc);
+          this.world.scene.add(npc.view.object);
+        }
+        const wasAlive = existed && npc.sim.mode !== 'dead';
+        npc.sim.push(state, now);
+        npc.view.setState(state.hp, state.mode);
+        if (wasAlive && state.mode === 'dead') {
+          this.particles.burst(state.x, state.y, new THREE.Color(0x9b63da), 1.2);
+        }
+        if (state.mode === 'dead' && this.targetId === state.id) {
+          this.targetId = null;
+        }
       }
     };
     this.room.onFire = (id, ev) => this.handleRemoteFire(id, ev);
@@ -257,6 +332,7 @@ export class Game {
       const name = this.remotes.get(id)?.sim.name;
       if (name) this.chat.addLine('', `* ${name} が退出しました`, true);
       this.removeRemote(id);
+      this.removeRemoteNpcsOwnedBy(id);
       this.updateHud();
     };
 
@@ -295,9 +371,12 @@ export class Game {
     // するが、setInterval は (~1Hz に間引かれつつも) 動き続けるため、
     // 裏に回ったプレイヤーも相手画面から消えない。
     window.setInterval(() => {
+      const now = performance.now();
+      this.updateNpcsToNow(now);
       this.sendStateNow();
+      if (now - this.lastNpcSentAt >= NPC_STATE_INTERVAL_MS) this.sendNpcsNow();
       // 弾幕 tick と HUD は rAF (描画) 停止中のバックグラウンドでも進める
-      this.tickToNow(performance.now());
+      this.tickToNow(now);
       this.updateHud();
     }, STATE_INTERVAL_MS);
 
@@ -311,6 +390,9 @@ export class Game {
           console.debug(`[game] remove stale remote ${id.slice(0, 8)}`);
           this.removeRemote(id);
         }
+      }
+      for (const [id, npc] of this.remoteNpcs) {
+        if (now - npc.sim.lastSeenAt > STALE_REMOTE_MS) this.removeRemoteNpc(id);
       }
 
       if (this.room.peerCount > 0) {
@@ -343,7 +425,9 @@ export class Game {
     // 仮想発射ボタンの長押し連射 (クールダウンは fire() 側で効く)
     if (this.fireHeld) this.fire();
 
+    this.updateNpcsToNow(now);
     this.tickToNow(now);
+    this.checkNpcHits(now);
     this.checkHits(now);
 
     // 無敵時間中は点滅、被弾直後は発光フラッシュ
@@ -355,6 +439,7 @@ export class Game {
     this.playerView.animate(now);
 
     this.markerTargets.clear();
+    let targetVisible = false;
     for (const [id, remote] of this.remotes) {
       const s = remote.sim.sample(now);
       if (s.visible) {
@@ -371,10 +456,41 @@ export class Game {
         this.markerTargets.set(id, { name: remote.sim.name, x: s.x, z: s.y });
         if (id === this.targetId) {
           this.targetRing.position.set(s.x, 0.05, s.y);
+          targetVisible = true;
         }
       }
     }
-    this.targetRing.visible = this.targetId !== null;
+
+    for (const npc of this.localNpcs) {
+      npc.view.setState(npc.sim.hp, npc.sim.mode);
+      npc.view.sync(npc.sim.pos.x, npc.sim.pos.y, npc.sim.heading, npc.sim.alive);
+      npc.view.animate(now);
+      if (npc.sim.alive) {
+        this.markerTargets.set(npc.sim.id, {
+          name: 'ウィスプ',
+          x: npc.sim.pos.x,
+          z: npc.sim.pos.y,
+        });
+      }
+      if (npc.sim.alive && npc.sim.id === this.targetId) {
+        this.targetRing.position.set(npc.sim.pos.x, 0.05, npc.sim.pos.y);
+        targetVisible = true;
+      }
+    }
+    for (const npc of this.remoteNpcs.values()) {
+      const s = npc.sim.sample(now);
+      npc.view.setState(npc.sim.hp, npc.sim.mode);
+      npc.view.sync(s.x, s.y, s.h, s.visible);
+      npc.view.animate(now);
+      if (s.visible) {
+        this.markerTargets.set(npc.sim.id, { name: 'ウィスプ', x: s.x, z: s.y });
+      }
+      if (s.visible && npc.sim.id === this.targetId) {
+        this.targetRing.position.set(s.x, 0.05, s.y);
+        targetVisible = true;
+      }
+    }
+    this.targetRing.visible = targetVisible;
 
     this.bulletView.sync(this.engine.bullets, this.room.selfId);
     this.particles.update(dt);
@@ -392,6 +508,88 @@ export class Game {
       this.fpsFrames = 0;
       this.hudTimer = 0;
       this.updateHud();
+    }
+  }
+
+  // --- 分散NPC (このクライアントの担当分だけAI・被弾を判定) ------------------
+
+  private updateNpcsToNow(now: number): void {
+    const dt = Math.min(Math.max((now - this.lastNpcUpdate) / 1000, 0), 0.25);
+    if (dt <= 0) return;
+    this.lastNpcUpdate = now;
+    const targets: NpcTarget[] = [
+      { id: this.room.selfId, pos: this.player.pos },
+    ];
+    for (const [id, remote] of this.remotes) {
+      if (remote.sim.hasPos) {
+        targets.push({ id, pos: { x: remote.sim.lastX, y: remote.sim.lastY } });
+      }
+    }
+    for (const npc of this.localNpcs) {
+      const attack = npc.sim.update(dt, now, targets);
+      if (attack) this.fireNpc(npc.sim, attack);
+    }
+  }
+
+  private fireNpc(npc: LocalNpcSim, attack: NpcAttack): void {
+    const origin = { x: npc.pos.x, y: npc.pos.y };
+    const dir = Math.atan2(
+      attack.targetPos.y - origin.y,
+      attack.targetPos.x - origin.x,
+    );
+    const ev: FireEvent = {
+      id: crypto.randomUUID(),
+      script: NPC_FIRE_SCRIPT_ID,
+      seed: (Math.random() * 0x100000000) >>> 0,
+      x: origin.x,
+      y: origin.y,
+      dir,
+      at: Date.now(),
+      target: attack.targetId,
+      tx: attack.targetPos.x,
+      ty: attack.targetPos.y,
+      npc: npc.id,
+    };
+    this.seenFireIds.add(ev.id);
+    this.engine.startScript(
+      NPC_FIRE_SCRIPT_SOURCE,
+      ev.seed,
+      () => origin,
+      dir,
+      npc.id,
+      () => attack.targetPos,
+      0,
+      ev.id,
+    );
+    this.room.broadcastFire(ev);
+  }
+
+  private checkNpcHits(now: number): void {
+    const bullets = this.engine.bullets;
+    for (const npc of this.localNpcs) {
+      if (!npc.sim.alive) continue;
+      for (let i = 0; i < bullets.length; i++) {
+        const bullet = bullets[i];
+        // 共通敵同士ではダメージを与えない。
+        if (!bullet.alive || isNpcId(bullet.owner)) continue;
+        const dx = bullet.x - npc.sim.pos.x;
+        const dy = bullet.y - npc.sim.pos.y;
+        const rr = bullet.radius + NPC_HIT_RADIUS;
+        if (dx * dx + dy * dy > rr * rr) continue;
+        const died = npc.sim.takeHit(bullet.dur, now);
+        this.engine.killAt(i);
+        this.room.broadcastBulletKill(bullet.fireId, bullet.spawnIdx);
+        if (died) {
+          this.particles.burst(
+            npc.sim.pos.x,
+            npc.sim.pos.y,
+            new THREE.Color(0x9b63da),
+            1.2,
+          );
+          if (this.targetId === npc.sim.id) this.targetId = null;
+          break;
+        }
+      }
     }
   }
 
@@ -425,7 +623,8 @@ export class Game {
     }
     if (died) {
       const killer =
-        this.remotes.get(killerId)?.sim.name ?? killerId.slice(0, 8);
+        (isNpcId(killerId) ? 'ウィスプ' : this.remotes.get(killerId)?.sim.name) ??
+        killerId.slice(0, 8);
       const announce = `* ${this.name} は ${killer} に撃墜されました`;
       this.chat.addLine('', announce, true);
       this.room.broadcastChat(announce);
@@ -522,6 +721,7 @@ export class Game {
   }
 
   private handleRemoteFire(fromId: string, ev: FireEvent): void {
+    if (ev.npc && !npcBelongsToPeer(ev.npc, fromId)) return;
     if (this.seenFireIds.has(ev.id)) return;
     this.seenFireIds.add(ev.id);
     if (this.seenFireIds.size > 1000) {
@@ -530,6 +730,7 @@ export class Game {
     }
     const source =
       DANMAKU_SCRIPTS[ev.script]?.source ??
+      (ev.script === NPC_FIRE_SCRIPT_ID ? NPC_FIRE_SCRIPT_SOURCE : undefined) ??
       (ev.src && ev.src.length <= MAX_SCRIPT_SRC_LEN ? ev.src : null);
     if (!source) return;
     // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える。
@@ -555,7 +756,7 @@ export class Game {
       ev.seed,
       () => origin,
       ev.dir,
-      fromId,
+      ev.npc ?? fromId,
       () => targetPos,
       catchup,
       ev.id,
@@ -570,6 +771,15 @@ export class Game {
     if (!targetId) return null;
     if (targetId === this.room.selfId) {
       return { x: this.player.pos.x, y: this.player.pos.y };
+    }
+    if (isNpcId(targetId)) {
+      const local = this.localNpcs.find((npc) => npc.sim.id === targetId)?.sim;
+      if (local?.alive) return { x: local.pos.x, y: local.pos.y };
+      const remoteNpc = this.remoteNpcs.get(targetId)?.sim;
+      if (remoteNpc && remoteNpc.mode !== 'dead') {
+        return { x: remoteNpc.lastX, y: remoteNpc.lastY };
+      }
+      return null;
     }
     const sim = this.remotes.get(targetId)?.sim;
     return sim?.hasPos ? { x: sim.lastX, y: sim.lastY } : null;
@@ -630,7 +840,7 @@ export class Game {
       this.downX = e.clientX;
       this.downY = e.clientY;
       // プレイヤーの上ならタップ判定 (pointerup) に委ねる
-      if (this.pickRemoteAt(e.clientX, e.clientY, container)) return;
+      if (this.pickTargetAt(e.clientX, e.clientY, container)) return;
       if (e.pointerType === 'touch') {
         // タッチは猶予期間を置いてから移動を確定する (2本指操作の誤発動防止)
         this.cancelPendingFollow();
@@ -678,7 +888,7 @@ export class Game {
       const dt = performance.now() - this.downAt;
       const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
       if (dt <= TAP_MS && moved <= TAP_PX) {
-        const hit = this.pickRemoteAt(e.clientX, e.clientY, container);
+        const hit = this.pickTargetAt(e.clientX, e.clientY, container);
         if (hit) {
           this.targetId = this.targetId === hit ? null : hit;
           this.updateHud();
@@ -711,8 +921,8 @@ export class Game {
     this.updateHud();
   }
 
-  /** 画面座標に一番近い他プレイヤーを拾う (しきい値以内)。ID を返す */
-  private pickRemoteAt(
+  /** 画面座標に一番近い他プレイヤー/NPCを拾う (しきい値以内)。 */
+  private pickTargetAt(
     clientX: number,
     clientY: number,
     container: HTMLElement,
@@ -732,6 +942,19 @@ export class Game {
       if (d < bestDist) {
         bestDist = d;
         best = id;
+      }
+    }
+    for (const npc of [...this.localNpcs, ...this.remoteNpcs.values()]) {
+      if (!npc.view.object.visible) continue;
+      const p = npc.view.object.position;
+      this.projTmp.set(p.x, 1.0, p.z).project(this.camera.camera);
+      if (this.projTmp.z > 1) continue;
+      const sx = ((this.projTmp.x + 1) / 2) * w;
+      const sy = ((1 - this.projTmp.y) / 2) * h;
+      const d = Math.hypot(sx - clientX, sy - clientY);
+      if (d < bestDist) {
+        bestDist = d;
+        best = npc.sim.id;
       }
     }
     return best;
@@ -772,10 +995,30 @@ export class Game {
     }
   }
 
+  private removeRemoteNpc(id: string): void {
+    const npc = this.remoteNpcs.get(id);
+    if (!npc) return;
+    this.remoteNpcs.delete(id);
+    this.world.scene.remove(npc.view.object);
+    if (this.targetId === id) this.targetId = null;
+  }
+
+  private removeRemoteNpcsOwnedBy(ownerId: string): void {
+    for (const [id, npc] of this.remoteNpcs) {
+      if (npc.ownerId === ownerId) this.removeRemoteNpc(id);
+    }
+  }
+
   private sendStateNow(): void {
     if (this.room.peerCount === 0) return;
     this.lastSentAt = performance.now();
     this.room.broadcastState(this.player.makeState());
+  }
+
+  private sendNpcsNow(): void {
+    if (this.room.peerCount === 0) return;
+    this.lastNpcSentAt = performance.now();
+    this.room.broadcastNpcs(this.localNpcs.map((npc) => npc.sim.makeState()));
   }
 
   /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
@@ -809,7 +1052,9 @@ export class Game {
         !this.engine.ownerHasRun(this.room.selfId),
     );
     const targetName = this.targetId
-      ? (this.remotes.get(this.targetId)?.sim.name ?? '?')
+      ? (isNpcId(this.targetId)
+          ? 'ウィスプ'
+          : (this.remotes.get(this.targetId)?.sim.name ?? '?'))
       : 'なし (クリックで指定)';
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
@@ -819,6 +1064,8 @@ export class Game {
       `peers: ${this.room.peerCount}\n` +
       `ice: ${iceSummary()}\n` +
       `${this.room.stats}\n` +
+      `enemies: ${this.localNpcs.filter((npc) => npc.sim.alive).length}` +
+      ` local / ${this.remoteNpcs.size} remote\n` +
       `bullets: ${this.engine.aliveCount} fps: ${this.fps}\n` +
       `[Space]発射 [1-5]切替: ${scriptName}\n` +
       `[Enter]チャット [E]スクリプト編集\n` +

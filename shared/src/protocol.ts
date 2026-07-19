@@ -146,6 +146,36 @@ export const MAX_HP = 100;
 /** リスポーン後の無敵時間 */
 export const INVULN_MS = 2_000;
 
+// --- 分散NPC ---------------------------------------------------------------
+
+/** 各クライアントが担当する小型敵の数 */
+export const NPCS_PER_PEER = 2;
+/** NPC状態の送信間隔 (5Hz) */
+export const NPC_STATE_INTERVAL_MS = 200;
+export const NPC_MAX_HP = 24;
+export const NPC_RESPAWN_MS = 6_000;
+
+export type NpcMode = 'spawn' | 'wander' | 'chase' | 'attack' | 'dead';
+
+/** 非信頼チャネルで送る、担当NPCの最新スナップショット */
+export interface NpcStatePayload {
+  id: string;
+  seq: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  h: number;
+  hp: number;
+  mode: NpcMode;
+  ts: number;
+}
+
+/** 非信頼・非順序チャネル上のリアルタイムメッセージ */
+export type RealtimeMessage =
+  | { type: 'state'; state: StatePayload }
+  | { type: 'npcs'; states: NpcStatePayload[] };
+
 // --- エネルギー (発射コスト) ----------------------------------------------
 // スクリプトの総コストは発射時に同じシードで空実行して算出し、一括消費する。
 // 消費判定は撃つ本人のクライアントのみが行う (自己申告制と同じ思想)。
@@ -188,6 +218,8 @@ export interface FireEvent {
   /** 発射時点で固定したターゲット位置。端末ごとの state 受信差による弾道分岐を防ぐ */
   tx?: number;
   ty?: number;
+  /** NPCによる発射なら担当ピア配下のNPC ID */
+  npc?: string;
   /** カスタムスクリプトのソース (script が同梱スクリプトにない場合に使用) */
   src?: string;
 }

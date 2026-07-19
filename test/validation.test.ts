@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseAppearance,
   parseFireEvent,
+  parseRealtimeMessage,
   parseReliableMessage,
   parseStatePayload,
 } from '../shared/src/validation';
@@ -38,5 +39,26 @@ describe('protocol validation', () => {
     };
     expect(parseFireEvent({ ...base, tx: 2, ty: 3 })).toMatchObject({ tx: 2, ty: 3 });
     expect(parseFireEvent({ ...base, tx: 2 })).toBeNull();
+    expect(parseFireEvent({
+      ...base,
+      target: `${peerId}:npc:0`,
+      npc: `${peerId}:npc:1`,
+      tx: 2,
+      ty: 3,
+    })).toMatchObject({ npc: `${peerId}:npc:1` });
+  });
+
+  it('validates a bounded NPC snapshot batch', () => {
+    const npc = {
+      id: `${peerId}:npc:0`, seq: 1, x: 4, y: 5, vx: 1, vy: 0,
+      h: 0, hp: 24, mode: 'chase', ts: Date.now(),
+    };
+    expect(parseRealtimeMessage({ type: 'npcs', states: [npc] }))
+      .toMatchObject({ type: 'npcs', states: [{ id: npc.id, mode: 'chase' }] });
+    expect(parseRealtimeMessage({ type: 'npcs', states: [npc, npc, npc] }))
+      .toBeNull();
+    expect(parseRealtimeMessage({
+      type: 'npcs', states: [{ ...npc, id: 'invalid:npc:0' }],
+    })).toBeNull();
   });
 });

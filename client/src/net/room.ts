@@ -3,6 +3,7 @@ import {
   NOSTR_RELAYS,
   ROOM_NAME,
   type FireEvent,
+  type NpcStatePayload,
   type StatePayload,
 } from '../../../shared/src/protocol';
 import { Mesh } from './mesh';
@@ -37,6 +38,12 @@ export class GameRoom {
     this.mesh.onState = fn;
   }
 
+  set onNpcs(
+    fn: ((id: string, states: NpcStatePayload[]) => void) | undefined,
+  ) {
+    this.mesh.onNpcs = fn;
+  }
+
   set onFire(fn: ((id: string, ev: FireEvent) => void) | undefined) {
     this.mesh.onFire = fn;
   }
@@ -67,6 +74,10 @@ export class GameRoom {
 
   broadcastState(state: StatePayload): void {
     this.mesh.broadcastState(state);
+  }
+
+  broadcastNpcs(states: NpcStatePayload[]): void {
+    this.mesh.broadcastNpcs(states);
   }
 
   broadcastFire(ev: FireEvent): void {
