@@ -20,12 +20,15 @@ export class BulletView {
   private readonly colorCache = new Map<string, THREE.Color>();
 
   /**
-   * @param resolveName 所有者ID → 表示名。アバターの色は名前から生成される
-   *   ため、弾も名前ベースで色を決めて見た目を一致させる
+   * @param resolveAppearance 所有者ID → カスタム体色 (未設定なら null) と表示名。
+   *   弾の色をアバターと一致させるために使う
    */
   constructor(
     scene: THREE.Scene,
-    private readonly resolveName: (owner: string) => string,
+    private readonly resolveAppearance: (owner: string) => {
+      color: string | null;
+      name: string;
+    },
   ) {
     this.mesh = new THREE.InstancedMesh(
       new THREE.SphereGeometry(1, 10, 8),
@@ -56,13 +59,16 @@ export class BulletView {
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
   }
 
-  /** 所有者ID → 弾色。アバター色 (名前ベース) を少し白に寄せて発光弾らしくする */
+  /** 所有者ID → 弾色。アバター色を少し白に寄せて発光弾らしくする */
   private ownerColor(owner: string): THREE.Color {
-    const name = this.resolveName(owner);
-    let c = this.colorCache.get(name);
+    const ap = this.resolveAppearance(owner);
+    const key = ap.color ?? `n:${ap.name}`;
+    let c = this.colorCache.get(key);
     if (!c) {
-      c = colorFromString(name).lerp(this.white, 0.25);
-      this.colorCache.set(name, c);
+      c = (ap.color ? new THREE.Color(ap.color) : colorFromString(ap.name))
+        .clone()
+        .lerp(this.white, 0.25);
+      this.colorCache.set(key, c);
     }
     return c;
   }

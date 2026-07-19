@@ -20,8 +20,8 @@ async function boot(): Promise<void> {
     startBot();
     return;
   }
-  const name = await showJoinOverlay();
-  const game = new Game(document.getElementById('app')!, name);
+  const { name, appearance } = await showJoinOverlay();
+  const game = new Game(document.getElementById('app')!, name, appearance);
   game.start();
 }
 

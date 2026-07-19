@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Appearance } from '../../../shared/src/protocol';
 import {
   colorFromString,
   createBody,
@@ -23,11 +24,14 @@ export class PlayerView {
   /** null のまま (リモート機) なら下段は描かない */
   private lastEnergyFraction: number | null = null;
 
-  constructor(name: string) {
+  constructor(name: string, appearance?: Appearance) {
     // ルートは位置のみを持ち、向き (rotation) は胴体だけに適用する。
     // 名前・HPバーはルート直下に置き、自機の向きで位置が回らないようにする
     this.object = new THREE.Group();
-    this.body = createBody(colorFromString(name));
+    const color = appearance?.c
+      ? new THREE.Color(appearance.c)
+      : colorFromString(name);
+    this.body = createBody(color, appearance?.s ?? 0, appearance?.a ?? 0);
     this.object.add(this.body);
     this.object.add(createNameSprite(name));
 

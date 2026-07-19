@@ -27,6 +27,14 @@ export function startBot(): void {
       y: (Math.random() * 2 - 1) * 30,
     },
     name,
+    // bot はランダムな見た目で参加する
+    {
+      s: Math.floor(Math.random() * 4),
+      c: `#${Math.floor(Math.random() * 0xffffff)
+        .toString(16)
+        .padStart(6, '0')}`,
+      a: Math.floor(Math.random() * 3),
+    },
   );
 
   let sent = 0;

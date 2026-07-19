@@ -6,6 +6,7 @@ import {
   INVULN_MS,
   MAX_HP,
   PLAYER_SPEED,
+  type Appearance,
   type StatePayload,
   type Vec2,
 } from '../../../shared/src/protocol';
@@ -32,6 +33,7 @@ export class LocalPlayerSim {
   constructor(
     spawn: Vec2,
     private readonly name: string,
+    private readonly appearance?: Appearance,
   ) {
     this.pos = { ...spawn };
   }
@@ -104,6 +106,7 @@ export class LocalPlayerSim {
       seq: this.seq++,
       ts: Date.now(),
       hp: this.hp,
+      ap: this.appearance,
       x: this.pos.x,
       y: this.pos.y,
       vx: this.vel.x,

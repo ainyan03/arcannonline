@@ -14,6 +14,7 @@ import {
   MAX_SCRIPT_SRC_LEN,
   STATE_INTERVAL_MS,
   TICK_MS,
+  type Appearance,
   type FireEvent,
   type Vec2,
 } from '../../../shared/src/protocol';
@@ -107,21 +108,25 @@ export class Game {
   private readonly hitFlash: HTMLElement;
   private customSource: string | null = null;
 
-  constructor(container: HTMLElement, private readonly name: string) {
+  constructor(
+    container: HTMLElement,
+    private readonly name: string,
+    private readonly appearance?: Appearance,
+  ) {
     this.world = createWorld(container);
     this.camera = new FollowCamera(this.world.renderer.domElement);
-    this.bulletView = new BulletView(
-      this.world.scene,
-      (owner) => this.remotes.get(owner)?.sim.name ?? owner,
-    );
+    this.bulletView = new BulletView(this.world.scene, (owner) => {
+      const sim = this.remotes.get(owner)?.sim;
+      return { color: sim?.ap?.c ?? null, name: sim?.name ?? owner };
+    });
     this.markers = new EdgeMarkers(container);
 
     const spawn: Vec2 = {
       x: (Math.random() * 2 - 1) * SPAWN_RANGE,
       y: (Math.random() * 2 - 1) * SPAWN_RANGE,
     };
-    this.player = new LocalPlayerSim(spawn, name);
-    this.playerView = new PlayerView(name);
+    this.player = new LocalPlayerSim(spawn, name, appearance);
+    this.playerView = new PlayerView(name, appearance);
     this.playerView.sync(spawn.x, spawn.y, 0);
     this.world.scene.add(this.playerView.object);
     // 初回フレーム前でもレイキャスト等が正しく動くようカメラを初期化する
@@ -195,7 +200,7 @@ export class Game {
       if (!remote) {
         remote = {
           sim: new RemotePlayerSim(state.n, now),
-          view: new PlayerView(state.n),
+          view: new PlayerView(state.n, state.ap),
         };
         remote.view.sync(state.x, state.y, state.h, false);
         this.remotes.set(id, remote);
