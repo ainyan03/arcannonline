@@ -12,6 +12,7 @@ import {
   STALE_PRESENCE_MS,
   type FireEvent,
   type NostrContent,
+  type NpcStatePayload,
   type ReliableMessage,
   type SignalEnvelope,
   type StatePayload,
@@ -38,6 +39,7 @@ export class Mesh {
   onPeerOpen?: (id: string) => void;
   onPeerClose?: (id: string) => void;
   onState?: (id: string, state: StatePayload) => void;
+  onNpcs?: (id: string, states: NpcStatePayload[]) => void;
   onFire?: (id: string, ev: FireEvent) => void;
   onChat?: (id: string, text: string) => void;
   onBulletKill?: (fireId: string, spawnIdx: number) => void;
@@ -78,6 +80,13 @@ export class Mesh {
     this.txCount++;
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendState(state);
+    }
+  }
+
+  broadcastNpcs(states: NpcStatePayload[]): void {
+    this.txCount++;
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendNpcs(states);
     }
   }
 
@@ -189,6 +198,11 @@ export class Mesh {
             this.rxCount++;
             this.presenceSeen.set(id, performance.now());
             this.onState?.(id, state);
+          },
+          onNpcs: (states) => {
+            this.rxCount++;
+            this.presenceSeen.set(id, performance.now());
+            this.onNpcs?.(id, states);
           },
           onReliable: (msg) => this.handleReliable(id, msg),
         },

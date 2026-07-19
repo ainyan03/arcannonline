@@ -73,6 +73,8 @@ export class BulletEngine {
 
   /** 弾が消えた時に呼ばれる (演出用)。sim 本体はこれに依存しない */
   onKill?: (bullet: Bullet, cause: KillCause) => void;
+  /** 同陣営など、弾同士を衝突させない所有者ペアの判定 */
+  areAllied?: (ownerA: string, ownerB: string) => boolean;
 
   private readonly runs: RunEntry[] = [];
   private readonly compiled = new Map<string, Program>();
@@ -411,7 +413,7 @@ export class BulletEngine {
             if (j <= i) continue;
             const b = bs[j];
             if (!b.alive || !a.alive) continue;
-            if (a.owner === b.owner) continue;
+            if (a.owner === b.owner || this.areAllied?.(a.owner, b.owner)) continue;
             const dx = a.x - b.x;
             const dy = a.y - b.y;
             const rr = a.radius + b.radius;

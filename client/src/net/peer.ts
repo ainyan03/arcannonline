@@ -1,11 +1,13 @@
 import type {
   ReliableMessage,
+  NpcStatePayload,
+  RealtimeMessage,
   SignalPayload,
   StatePayload,
 } from '../../../shared/src/protocol';
 import {
   parseReliableMessage,
-  parseStatePayload,
+  parseRealtimeMessage,
 } from '../../../shared/src/validation';
 
 export interface PeerEvents {
@@ -14,6 +16,7 @@ export interface PeerEvents {
   /** 接続が失敗・切断された（相手側都合含む） */
   onClose: () => void;
   onState: (msg: StatePayload) => void;
+  onNpcs: (states: NpcStatePayload[]) => void;
   onReliable: (msg: ReliableMessage) => void;
 }
 
@@ -65,8 +68,9 @@ export class Peer {
     this.stateCh.onclose = () => this.notifyClose();
     this.stateCh.onmessage = (ev) => {
       try {
-        const msg = parseStatePayload(JSON.parse(String(ev.data)));
-        if (msg) events.onState(msg);
+        const msg = parseRealtimeMessage(JSON.parse(String(ev.data)));
+        if (msg?.type === 'state') events.onState(msg.state);
+        else if (msg?.type === 'npcs') events.onNpcs(msg.states);
       } catch {
         /* 壊れたパケットは無視 */
       }
@@ -139,6 +143,14 @@ export class Peer {
   }
 
   sendState(msg: StatePayload): void {
+    this.sendRealtime({ type: 'state', state: msg });
+  }
+
+  sendNpcs(states: NpcStatePayload[]): void {
+    this.sendRealtime({ type: 'npcs', states });
+  }
+
+  private sendRealtime(msg: RealtimeMessage): void {
     if (this.stateCh.readyState === 'open') {
       this.stateCh.send(JSON.stringify(msg));
     }
