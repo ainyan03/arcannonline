@@ -21,52 +21,49 @@ export interface DanmakuScript {
   source: string;
 }
 
+// 同梱スクリプトは「1回の発射 = 1セット」を基本とする。連射量は発射ボタンの
+// 長押し (クールダウン毎に再発射、離せば停止) でユーザーが制御する。
+// 多段シーケンスも DSL としては書ける (spiral が見本)。
 export const DANMAKU_SCRIPTS: Record<string, DanmakuScript> = {
   ring: {
     name: '全方位リング',
     source: `
 let n = 24;
-loop (6) {
-  let i = 0;
-  loop (n) {
-    fire(dir + i * 360 / n, 12, 2, 0.5);
-    i = i + 1;
-  }
-  wait(20);
+let i = 0;
+loop (n) {
+  fire(dir + i * 360 / n, 12, 2, 0.5);
+  i = i + 1;
 }
 `,
   },
   spiral: {
     name: '双腕スパイラル',
     source: `
+// シーケンス型の見本: 約1回転ぶん回りながら撃つ
 let a = dir;
-loop (180) {
+loop (26) {
   fire(a, 10, 1, 0.4);
   fire(a + 180, 10, 1, 0.4);
-  a = a + 7;
+  a = a + 14;
   wait(2);
 }
 `,
   },
   spray: {
-    name: '前方ばらまき',
+    name: '前方ショット',
     source: `
-loop (60) {
-  fire(dir + rand(0 - 30, 30), rand(8, 16), 1, 0.35);
-  wait(3);
+loop (6) {
+  fire(dir + rand(0 - 25, 25), rand(10, 18), 1, 0.35);
 }
 `,
   },
   aimshot: {
-    name: '狙い3way連射',
+    name: '狙い3way',
     source: `
-// aim は発射のたびに再計算されるため、動くターゲットを追尾照準する
-loop (12) {
-  fire(aim - 10, 16, 1, 0.4);
-  fire(aim, 18, 2, 0.45);
-  fire(aim + 10, 16, 1, 0.4);
-  wait(8);
-}
+// aim は発射時のターゲット方向を追尾照準する
+fire(aim - 10, 16, 1, 0.4);
+fire(aim, 18, 2, 0.45);
+fire(aim + 10, 16, 1, 0.4);
 `,
   },
 };
