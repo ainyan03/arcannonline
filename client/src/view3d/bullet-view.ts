@@ -1,13 +1,20 @@
 import * as THREE from 'three';
 import { MAX_BULLETS } from '../../../shared/src/protocol';
+import { isNpcId } from '../../../shared/src/validation';
 import type { Bullet } from '../sim/danmaku/engine';
 import { colorFromString } from './avatar';
 
 const BULLET_Y = 0.9;
 
+/** 敵弾のハロー倍率。味方弾 (2.0) より大きくして色以外でも見分けられるようにする */
+const ENEMY_HALO_SCALE = 2.8;
+const ALLY_HALO_SCALE = 2.0;
+
 /**
  * 弾の一括描画。InstancedMesh 1枚 + インスタンスカラーで全弾を描く。
- * 弾の色は所有者のアバター色と連動し、自弾は白寄りの明色で区別する。
+ * 協力プレイの視認性のため、敵 (NPC) の弾は所有者色でなく全プレイヤー共通の
+ * 警告色 + 大きめのハローで描き、味方の弾は所有者のアバター色と連動させる
+ * (自弾は白寄りの明色)。避けるべき弾が一目で分かるようにする
  */
 export class BulletView {
   private readonly mesh: THREE.InstancedMesh;
@@ -18,6 +25,7 @@ export class BulletView {
   private readonly pos = new THREE.Vector3();
   private readonly scale = new THREE.Vector3();
   private readonly ownColor = new THREE.Color(0xfff2b0);
+  private readonly enemyColor = new THREE.Color(0xff4d6d);
   private readonly white = new THREE.Color(0xffffff);
   private readonly colorCache = new Map<string, THREE.Color>();
 
@@ -76,13 +84,15 @@ export class BulletView {
     let i = 0;
     for (const b of bullets) {
       if (!b.alive) continue;
-      const color = b.owner === selfId ? this.ownColor : this.ownerColor(b.owner);
+      const color = this.colorFor(b.owner, selfId);
       this.pos.set(b.x, BULLET_Y, b.y);
       this.scale.setScalar(b.radius);
       this.mat.compose(this.pos, this.quat, this.scale);
       this.mesh.setMatrixAt(i, this.mat);
       this.mesh.setColorAt(i, color);
-      this.scale.setScalar(b.radius * 2.0);
+      this.scale.setScalar(
+        b.radius * (isNpcId(b.owner) ? ENEMY_HALO_SCALE : ALLY_HALO_SCALE),
+      );
       this.mat.compose(this.pos, this.quat, this.scale);
       this.halo.setMatrixAt(i, this.mat);
       this.halo.setColorAt(i, color);
@@ -104,6 +114,7 @@ export class BulletView {
 
   /** 弾の表示色 (パーティクル等の演出と色を合わせるために公開) */
   colorFor(owner: string, selfId: string): THREE.Color {
+    if (isNpcId(owner)) return this.enemyColor;
     return owner === selfId ? this.ownColor : this.ownerColor(owner);
   }
 
