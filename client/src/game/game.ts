@@ -25,6 +25,7 @@ import {
   type Vec2,
 } from '../../../shared/src/protocol';
 import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
+import { GameAudio } from '../audio/game-audio';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
 import { benchEngine } from '../sim/danmaku/bench';
@@ -98,6 +99,7 @@ export class Game {
   private readonly localNpcs: LocalNpc[] = [];
   private readonly remoteNpcs = new Map<string, RemoteNpc>();
   private readonly room: GameRoom;
+  private readonly audio = new GameAudio();
   private readonly hud: HTMLElement;
   private readonly engine = new BulletEngine();
   private readonly bulletView: BulletView;
@@ -150,6 +152,8 @@ export class Game {
     private readonly name: string,
     private readonly appearance?: Appearance,
   ) {
+    // 参加ボタンのユーザー操作中に初期化し、ブラウザの自動再生制限を解除する。
+    void this.audio.unlock();
     this.world = createWorld(container);
     this.camera = new FollowCamera(this.world.renderer.domElement);
     this.bulletView = new BulletView(this.world.scene, (owner) => {
@@ -170,6 +174,7 @@ export class Game {
           b.radius,
         );
       }
+      if (cause === 'collide') this.audio.playCollision(b.radius);
     };
     this.markers = new EdgeMarkers(container);
 
@@ -200,6 +205,22 @@ export class Game {
       location.reload();
     });
     container.appendChild(leaveBtn);
+
+    const soundBtn = document.createElement('button');
+    soundBtn.type = 'button';
+    soundBtn.className = 'sound-btn';
+    const refreshSoundButton = () => {
+      soundBtn.textContent = this.audio.enabled ? '🔊' : '🔇';
+      soundBtn.title = this.audio.enabled ? '音声をミュート' : '音声をオン';
+      soundBtn.setAttribute('aria-label', soundBtn.title);
+      soundBtn.setAttribute('aria-pressed', String(!this.audio.enabled));
+    };
+    soundBtn.addEventListener('click', () => {
+      this.audio.toggle();
+      refreshSoundButton();
+    });
+    refreshSoundButton();
+    container.appendChild(soundBtn);
 
     this.chat = new ChatUI(container);
     this.chat.onSend = (text) => {
@@ -279,6 +300,7 @@ export class Game {
         this.remotes.set(id, remote);
         this.world.scene.add(remote.view.object);
         this.chat.addLine('', `* ${state.n} が参加しました`, true);
+        this.audio.playJoin();
         this.updateHud();
       }
       remote.sim.push(state, now);
@@ -314,6 +336,11 @@ export class Game {
         npc.view.setState(state.hp, state.mode);
         if (wasAlive && state.mode === 'dead') {
           this.particles.burst(state.x, state.y, new THREE.Color(0x9b63da), 1.2);
+          if (
+            Math.hypot(state.x - this.player.pos.x, state.y - this.player.pos.y) < 48
+          ) {
+            this.audio.playDefeat();
+          }
         }
         if (state.mode === 'dead' && this.targetId === state.id) {
           this.targetId = null;
@@ -327,10 +354,14 @@ export class Game {
       const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
       // リモートの通常発言を「* 」だけでシステム通知扱いにしない。
       this.chat.addLine(name, text);
+      this.audio.playChat();
     };
     this.room.onPeerLeave = (id) => {
       const name = this.remotes.get(id)?.sim.name;
-      if (name) this.chat.addLine('', `* ${name} が退出しました`, true);
+      if (name) {
+        this.chat.addLine('', `* ${name} が退出しました`, true);
+        this.audio.playLeave();
+      }
       this.removeRemote(id);
       this.removeRemoteNpcsOwnedBy(id);
       this.updateHud();
@@ -562,6 +593,9 @@ export class Game {
       ev.id,
     );
     this.room.broadcastFire(ev);
+    this.audio.playEnemyFire(
+      Math.hypot(origin.x - this.player.pos.x, origin.y - this.player.pos.y),
+    );
   }
 
   private checkNpcHits(now: number): void {
@@ -579,6 +613,7 @@ export class Game {
         const died = npc.sim.takeHit(bullet.dur, now);
         this.engine.killAt(i);
         this.room.broadcastBulletKill(bullet.fireId, bullet.spawnIdx);
+        this.audio.playHit();
         if (died) {
           this.particles.burst(
             npc.sim.pos.x,
@@ -586,6 +621,7 @@ export class Game {
             new THREE.Color(0x9b63da),
             1.2,
           );
+          this.audio.playDefeat();
           if (this.targetId === npc.sim.id) this.targetId = null;
           break;
         }
@@ -615,6 +651,7 @@ export class Game {
       // 他クライアントにも消滅を通知 (発射イベントID + 生成順で特定)
       this.room.broadcastBulletKill(b.fireId, b.spawnIdx);
       this.selfFlashUntil = now + FLASH_MS;
+      this.audio.playHit();
       if (dead) {
         died = true;
         killerId = b.owner;
@@ -622,6 +659,7 @@ export class Game {
       }
     }
     if (died) {
+      this.audio.playDefeat();
       const killer =
         (isNpcId(killerId) ? 'ウィスプ' : this.remotes.get(killerId)?.sim.name) ??
         killerId.slice(0, 8);
@@ -718,6 +756,7 @@ export class Game {
       ev.id,
     );
     this.room.broadcastFire(ev);
+    this.audio.playFire();
   }
 
   private handleRemoteFire(fromId: string, ev: FireEvent): void {
@@ -761,6 +800,11 @@ export class Game {
       catchup,
       ev.id,
     );
+    if (ev.npc) {
+      this.audio.playEnemyFire(
+        Math.hypot(origin.x - this.player.pos.x, origin.y - this.player.pos.y),
+      );
+    }
   }
 
   /**
