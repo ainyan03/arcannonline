@@ -97,7 +97,15 @@ export async function loginWithGithub(): Promise<void> {
   const authMod = await ensureAuth();
   const auth = authMod.getAuth();
   const provider = new authMod.GithubAuthProvider();
-  await authMod.signInWithPopup(auth, provider);
+  const result = await authMod.signInWithPopup(auth, provider);
+  // 表示名を GitHub の @ユーザー名に固定する。@ユーザー名は ID トークンに
+  // 含まれないため、displayName へ書き込んでトークンを再発行することで
+  // name クレームとして載せ、ピアが検証できる「アカウント名」にする
+  const username = authMod.getAdditionalUserInfo(result)?.username;
+  if (username && result.user.displayName !== username) {
+    await authMod.updateProfile(result.user, { displayName: username });
+    await result.user.getIdToken(true); // 新しい name で発行し直し、リスナーへ通知させる
+  }
 }
 
 export async function logoutGithub(): Promise<void> {

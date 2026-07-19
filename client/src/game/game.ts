@@ -29,7 +29,10 @@ import {
 import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
 import { currentAccount, onAccountChange } from '../auth/github';
 import { FIREBASE_PROJECT_ID } from '../auth/firebase-config';
-import { verifyFirebaseToken } from '../auth/verify-token';
+import {
+  verifyFirebaseToken,
+  type VerifiedProfile,
+} from '../auth/verify-token';
 import { GameAudio } from '../audio/game-audio';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
@@ -125,8 +128,8 @@ export class Game {
   private readonly seenFireIds = new Set<string>();
   /** ピアごとの最後に受理した profile トークン (再検証の抑止) */
   private readonly profileTokenByPeer = new Map<string, string>();
-  /** 検証済みだが PlayerView 未生成のピアのアバターURL (state 受信時に適用) */
-  private readonly pendingAvatars = new Map<string, string>();
+  /** 検証済みだが PlayerView 未生成のピアのプロフィール (state 受信時に適用) */
+  private readonly pendingProfiles = new Map<string, VerifiedProfile>();
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -322,10 +325,10 @@ export class Game {
         this.remotes.set(id, remote);
         this.world.scene.add(remote.view.object);
         // state より先に profile が届いて検証済みならここで適用する
-        const pendingAvatar = this.pendingAvatars.get(id);
-        if (pendingAvatar) {
-          this.pendingAvatars.delete(id);
-          remote.view.setAvatarUrl(pendingAvatar, true);
+        const pending = this.pendingProfiles.get(id);
+        if (pending) {
+          this.pendingProfiles.delete(id);
+          this.applyVerifiedProfile(remote.view, pending);
         }
         this.chat.addLine('', `* ${state.n} が参加しました`, true);
         this.audio.playJoin();
@@ -405,9 +408,11 @@ export class Game {
     this.room.onProfile = (id, token) => this.handleProfile(id, token);
     const applyOwnAccount = () => {
       const acc = currentAccount();
-      const picture = acc?.picture;
-      if (picture) this.playerView.setAvatarUrl(picture, true);
-      if (acc) this.sendProfileNow();
+      if (!acc) return;
+      // 頭上ラベルは検証済みアカウント名 (フル) に差し替える
+      this.playerView.setName(acc.name);
+      if (acc.picture) this.playerView.setAvatarUrl(acc.picture, true);
+      this.sendProfileNow();
     };
     applyOwnAccount();
     onAccountChange(applyOwnAccount);
@@ -1160,11 +1165,18 @@ export class Game {
     this.profileTokenByPeer.set(id, token);
     void verifyFirebaseToken(token, FIREBASE_PROJECT_ID).then((profile) => {
       // 検証中に別トークンが届いていたら古い結果は捨てる
-      if (!profile?.picture || this.profileTokenByPeer.get(id) !== token) return;
+      if (!profile || this.profileTokenByPeer.get(id) !== token) return;
+      if (!profile.name && !profile.picture) return;
       const remote = this.remotes.get(id);
-      if (remote) remote.view.setAvatarUrl(profile.picture, true);
-      else this.pendingAvatars.set(id, profile.picture);
+      if (remote) this.applyVerifiedProfile(remote.view, profile);
+      else this.pendingProfiles.set(id, profile);
     });
+  }
+
+  /** 検証済みプロフィールをラベルへ反映 (名前はフル表示、アバターはバッジ付き) */
+  private applyVerifiedProfile(view: PlayerView, profile: VerifiedProfile): void {
+    if (profile.name) view.setName(profile.name);
+    if (profile.picture) view.setAvatarUrl(profile.picture, true);
   }
 
   /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */

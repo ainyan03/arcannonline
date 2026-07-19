@@ -29,7 +29,7 @@ export class NameLabel {
   private verified = false;
 
   constructor(
-    private readonly name: string,
+    private name: string,
     anchorY: number,
     private idSeed?: string,
   ) {
@@ -51,6 +51,15 @@ export class NameLabel {
   /** identicon のシード (ピアID)。自機は room 生成後に判明するため後付けできる */
   setIdSeed(seed: string): void {
     this.idSeed = seed;
+    this.redraw();
+  }
+
+  /**
+   * 表示名を差し替える (GitHub 認証済みの検証済みアカウント名など)。
+   * state の名前は互換性のため16文字止まりだが、こちらはフル名を表示できる
+   */
+  setName(name: string): void {
+    this.name = name.slice(0, 40);
     this.redraw();
   }
 

@@ -22,8 +22,9 @@ async function boot(): Promise<void> {
     startBot();
     return;
   }
-  // GitHub ログインの復元は待たない (完了すると join 画面や頭上ラベルに反映される)
-  void restoreLogin();
+  // GitHub ログインの復元を待ってから参加画面を出す。連携中はアカウント名で
+  // 参加するため、名前の確定前に復元が済んでいる必要がある (未連携なら即返る)
+  await restoreLogin();
   const [{ name, appearance }, privkey] = await Promise.all([
     showJoinOverlay(),
     loadIdentityKey(),

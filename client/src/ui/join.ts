@@ -37,10 +37,19 @@ function loadAppearance(): Appearance {
  * 一度参加したタブが再読み込みされた場合 (スマホの画面ロック復帰等) は、
  * オーバーレイを出さずに保存済みの設定で即時再参加する。
  */
+/** GitHub 連携中はアカウント名を強制する (state の名前上限16文字に切り詰め) */
+function accountName(): string | null {
+  const acc = currentAccount();
+  return acc ? acc.name.slice(0, 16) : null;
+}
+
 export function showJoinOverlay(): Promise<JoinResult> {
   const savedName = localStorage.getItem(NAME_KEY);
   if (sessionStorage.getItem(AUTOJOIN_KEY) && savedName) {
-    return Promise.resolve({ name: savedName, appearance: loadAppearance() });
+    return Promise.resolve({
+      name: accountName() ?? savedName,
+      appearance: loadAppearance(),
+    });
   }
   return new Promise((resolve) => {
     // ログインボタン押下で即ポップアップを開けるよう SDK を先にロードしておく
@@ -62,7 +71,19 @@ export function showJoinOverlay(): Promise<JoinResult> {
     input.type = 'text';
     input.maxLength = 16;
     input.placeholder = 'プレイヤー名';
-    input.value = savedName ?? `player${Math.floor(Math.random() * 1000)}`;
+    // 手入力の名前は連携解除時に戻せるよう別に覚えておく
+    let manualName = savedName ?? `player${Math.floor(Math.random() * 1000)}`;
+    input.value = manualName;
+    input.addEventListener('input', () => {
+      if (!input.disabled) manualName = input.value;
+    });
+    // GitHub 連携中はアカウント名で参加する (名前欄はロック)
+    const syncNameLock = () => {
+      const ghName = accountName();
+      input.disabled = ghName !== null;
+      input.value = ghName ?? manualName;
+      input.title = ghName !== null ? 'GitHub 連携中はアカウント名で参加します' : '';
+    };
 
     const saved = loadAppearance();
 
@@ -137,8 +158,12 @@ export function showJoinOverlay(): Promise<JoinResult> {
         ghRow.appendChild(login);
       }
     };
-    renderGh();
-    onAccountChange(renderGh);
+    const renderAuthState = () => {
+      renderGh();
+      syncNameLock();
+    };
+    renderAuthState();
+    onAccountChange(renderAuthState);
 
     const button = document.createElement('button');
     button.textContent = '参加';
@@ -150,7 +175,9 @@ export function showJoinOverlay(): Promise<JoinResult> {
         c: colorIn.value,
         a: Number(accSel.value),
       };
-      localStorage.setItem(NAME_KEY, name);
+      // 保存するのは手入力の名前。GitHub 連携中の参加名は毎回アカウントから
+      // 導出するので保存せず、解除したら手入力の名前へ戻れるようにする
+      localStorage.setItem(NAME_KEY, manualName.trim().slice(0, 16) || 'noname');
       localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearance));
       sessionStorage.setItem(AUTOJOIN_KEY, '1');
       overlay.remove();

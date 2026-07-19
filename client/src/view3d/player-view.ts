@@ -88,6 +88,11 @@ export class PlayerView {
     this.label.setIdSeed(seed);
   }
 
+  /** 頭上ラベルの表示名を差し替える (検証済みの GitHub アカウント名) */
+  setName(name: string): void {
+    this.label.setName(name);
+  }
+
   /**
    * 認証済みアバター画像を読み込んでラベルに反映する。
    * 読み込み失敗時は identicon のまま (何もしない)。
