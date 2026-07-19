@@ -242,6 +242,9 @@ export interface FireEvent {
 /** 共有されるカスタムスクリプトソースの長さ上限 */
 export const MAX_SCRIPT_SRC_LEN = 4_000;
 
+/** 共有される GitHub 認証トークン (Firebase ID トークン JWT) の長さ上限 */
+export const MAX_ID_TOKEN_LEN = 4_096;
+
 /** 信頼チャネルのメッセージ */
 export type ReliableMessage =
   /** v はプロトコル互換バージョン。接続直後の初回 PEX で相手へ伝わる */
@@ -254,4 +257,11 @@ export type ReliableMessage =
    * (スクリプトは決定論的に同じ順序で弾を生成するため)
    */
   | { type: 'bkill'; f: string; i: number }
-  | { type: 'chat'; text: string };
+  | { type: 'chat'; text: string }
+  /**
+   * GitHub 認証済みプロフィールの申告 (Firebase ID トークン)。受信側は
+   * Google の公開鍵で署名を独立検証し、認証バッジとアバターを表示する。
+   * 注意: トークンは送信ピアの鍵ペアに束縛されないため、他人のトークンを
+   * 転載する表示上のなりすましは現状防げない (試作段階の割り切り)
+   */
+  | { type: 'profile'; token: string };

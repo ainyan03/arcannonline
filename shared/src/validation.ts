@@ -1,6 +1,7 @@
 import {
   FIELD_SIZE,
   MAX_HP,
+  MAX_ID_TOKEN_LEN,
   MAX_PEERS,
   MAX_SCRIPT_SRC_LEN,
   NPC_MAX_HP,
@@ -23,6 +24,8 @@ const PEER_ID_RE = /^[0-9a-f]{64}$/;
 /** 申告バージョンの受理上限 (異常値によるバナー誤発火を防ぐ緩い天井) */
 const MAX_PROTO_VERSION = 1_000_000;
 const NPC_ID_RE = /^[0-9a-f]{64}:npc:[0-3]$/;
+/** JWT (base64url 3パート) の形式チェック */
+const JWT_RE = /^[\w-]+\.[\w-]+\.[\w-]+$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MAX_SIGNAL_SDP_LEN = 64_000;
 const MAX_SIGNAL_ID_LEN = 128;
@@ -246,6 +249,10 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
     case 'chat':
       return shortString(v.text, 200) && v.text.trim().length > 0
         ? { type: 'chat', text: v.text }
+        : null;
+    case 'profile':
+      return shortString(v.token, MAX_ID_TOKEN_LEN) && JWT_RE.test(v.token)
+        ? { type: 'profile', token: v.token }
         : null;
     default:
       return null;

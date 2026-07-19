@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { drawIdenticon } from './identicon';
 
 /** 名前文字列から安定した色を得る（全クライアントで同じ見た目になる）。 */
 export function colorFromString(s: string): THREE.Color {
@@ -9,33 +10,110 @@ export function colorFromString(s: string): THREE.Color {
   return new THREE.Color().setHSL((h % 360) / 360, 0.6, 0.55);
 }
 
-export function createNameSprite(
-  name: string,
-  anchorY = HEAD_ANCHOR_Y,
-): THREE.Sprite {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d')!;
-  ctx.font = 'bold 28px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.lineWidth = 5;
-  ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-  ctx.strokeText(name, 128, 32);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(name, 128, 32);
+const LABEL_W = 320;
+const LABEL_H = 64;
+const ICON_SIZE = 40;
+const ICON_GAP = 8;
 
-  const texture = new THREE.CanvasTexture(canvas);
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: texture, transparent: true }),
-  );
-  sprite.scale.set(4, 1, 1);
-  // HP バーと同じアンカー点から、スクリーン空間で上方向へオフセットする
-  // (ワールドYで離すと真上視点で HP バーと重なるため)
-  sprite.center.set(0.5, 0.25);
-  sprite.position.y = anchorY;
-  return sprite;
+/**
+ * 頭上の名前ラベル (アイコン + 名前) を1枚のスプライトに Canvas 描画する。
+ * アイコンは identicon (ピアID由来) を既定とし、GitHub 認証済みの相手は
+ * setAvatar でアバター画像 + 認証バッジに置き換わる。
+ */
+export class NameLabel {
+  readonly sprite: THREE.Sprite;
+
+  private readonly canvas: HTMLCanvasElement;
+  private readonly texture: THREE.CanvasTexture;
+  private icon: CanvasImageSource | null = null;
+  private verified = false;
+
+  constructor(
+    private readonly name: string,
+    anchorY: number,
+    private idSeed?: string,
+  ) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = LABEL_W;
+    this.canvas.height = LABEL_H;
+    this.texture = new THREE.CanvasTexture(this.canvas);
+    this.sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: this.texture, transparent: true }),
+    );
+    this.sprite.scale.set(LABEL_W / LABEL_H, 1, 1);
+    // HP バーと同じアンカー点から、スクリーン空間で上方向へオフセットする
+    // (ワールドYで離すと真上視点で HP バーと重なるため)
+    this.sprite.center.set(0.5, 0.25);
+    this.sprite.position.y = anchorY;
+    this.redraw();
+  }
+
+  /** identicon のシード (ピアID)。自機は room 生成後に判明するため後付けできる */
+  setIdSeed(seed: string): void {
+    this.idSeed = seed;
+    this.redraw();
+  }
+
+  /** 認証済みアバター画像へ置き換える (identicon より優先) */
+  setAvatar(img: CanvasImageSource, verified: boolean): void {
+    this.icon = img;
+    this.verified = verified;
+    this.redraw();
+  }
+
+  private redraw(): void {
+    const ctx = this.canvas.getContext('2d')!;
+    ctx.clearRect(0, 0, LABEL_W, LABEL_H);
+    ctx.font = 'bold 28px sans-serif';
+    const hasIcon = this.icon !== null || this.idSeed !== undefined;
+    const textW = ctx.measureText(this.name).width;
+    const total = (hasIcon ? ICON_SIZE + ICON_GAP : 0) + textW;
+    // 長い名前はラベル全体を縮小して収める
+    const scale = Math.min(1, (LABEL_W - 8) / total);
+    ctx.save();
+    ctx.translate(LABEL_W / 2, LABEL_H / 2);
+    ctx.scale(scale, scale);
+    let cursorX = -total / 2;
+    if (hasIcon) {
+      const iy = -ICON_SIZE / 2;
+      if (this.icon) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(cursorX, iy, ICON_SIZE, ICON_SIZE, ICON_SIZE * 0.18);
+        ctx.clip();
+        ctx.drawImage(this.icon, cursorX, iy, ICON_SIZE, ICON_SIZE);
+        ctx.restore();
+      } else {
+        drawIdenticon(ctx, this.idSeed!, cursorX, iy, ICON_SIZE);
+      }
+      if (this.verified) {
+        // 右下に認証済みバッジ (緑丸 + チェック)
+        const bx = cursorX + ICON_SIZE - 6;
+        const by = iy + ICON_SIZE - 6;
+        ctx.beginPath();
+        ctx.arc(bx, by, 8, 0, Math.PI * 2);
+        ctx.fillStyle = '#2da44e';
+        ctx.fill();
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(bx - 3.5, by);
+        ctx.lineTo(bx - 1, by + 3);
+        ctx.lineTo(bx + 4, by - 3.5);
+        ctx.stroke();
+      }
+      cursorX += ICON_SIZE + ICON_GAP;
+    }
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.strokeText(this.name, cursorX, 0);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(this.name, cursorX, 0);
+    ctx.restore();
+    this.texture.needsUpdate = true;
+  }
 }
 
 /** 名前・HPバー共通のアンカー高さ。オフセットはスクリーン空間で行う */

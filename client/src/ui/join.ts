@@ -1,4 +1,11 @@
 import type { Appearance } from '../../../shared/src/protocol';
+import {
+  currentAccount,
+  loginWithGithub,
+  logoutGithub,
+  onAccountChange,
+  preloadAuth,
+} from '../auth/github';
 
 const NAME_KEY = 'arcn-name';
 const AUTOJOIN_KEY = 'arcn-autojoin';
@@ -36,6 +43,8 @@ export function showJoinOverlay(): Promise<JoinResult> {
     return Promise.resolve({ name: savedName, appearance: loadAppearance() });
   }
   return new Promise((resolve) => {
+    // ログインボタン押下で即ポップアップを開けるよう SDK を先にロードしておく
+    preloadAuth();
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
 
@@ -78,6 +87,59 @@ export function showJoinOverlay(): Promise<JoinResult> {
     row.className = 'row';
     row.append(shapeSel, colorIn, accSel);
 
+    // GitHub 連携 (任意): ログインすると頭上ラベルが認証済みアバターになる
+    const ghRow = document.createElement('div');
+    ghRow.className = 'gh-row';
+    const ghError = document.createElement('div');
+    ghError.className = 'gh-error';
+    ghError.style.display = 'none';
+    const renderGh = () => {
+      ghRow.replaceChildren();
+      const acc = currentAccount();
+      if (acc) {
+        if (acc.picture) {
+          const img = document.createElement('img');
+          img.src = acc.picture;
+          img.alt = '';
+          ghRow.appendChild(img);
+        }
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'gh-name';
+        nameSpan.textContent = acc.name;
+        const badge = document.createElement('span');
+        badge.className = 'gh-badge';
+        badge.textContent = '✓ 連携済み';
+        const unlink = document.createElement('button');
+        unlink.type = 'button';
+        unlink.className = 'gh-unlink';
+        unlink.textContent = '解除';
+        unlink.addEventListener('click', () => void logoutGithub());
+        ghRow.append(nameSpan, badge, unlink);
+      } else {
+        const login = document.createElement('button');
+        login.type = 'button';
+        login.className = 'gh-login';
+        login.textContent = 'GitHub 連携 (任意: 認証バッジ + アバター表示)';
+        login.addEventListener('click', () => {
+          login.disabled = true;
+          login.textContent = 'GitHub に接続中…';
+          ghError.style.display = 'none';
+          loginWithGithub().catch((err: unknown) => {
+            const code = (err as { code?: string } | null)?.code;
+            ghError.textContent =
+              code === 'auth/popup-blocked'
+                ? 'ポップアップがブロックされました。許可してから再試行してください'
+                : 'ログインできませんでした (キャンセル/失敗)';
+            ghError.style.display = '';
+            renderGh();
+          });
+        });
+        ghRow.appendChild(login);
+      }
+    };
+    renderGh();
+    onAccountChange(renderGh);
+
     const button = document.createElement('button');
     button.textContent = '参加';
 
@@ -99,7 +161,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
       if (e.key === 'Enter') submit();
     });
 
-    panel.append(title, tagline, input, row, button);
+    panel.append(title, tagline, input, row, ghRow, ghError, button);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     input.focus();

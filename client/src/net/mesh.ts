@@ -44,6 +44,8 @@ export class Mesh {
   onFire?: (id: string, ev: FireEvent) => void;
   onChat?: (id: string, text: string) => void;
   onBulletKill?: (fireId: string, spawnIdx: number) => void;
+  /** GitHub 認証済みプロフィール (Firebase ID トークン) の申告 */
+  onProfile?: (id: string, token: string) => void;
   /** ピアが申告したプロトコルバージョン (プレゼンス/PEX 受信のたびに発火) */
   onPeerVersion?: (id: string, version: number) => void;
 
@@ -110,6 +112,12 @@ export class Mesh {
       if (e.peer.isOpen) {
         e.peer.sendReliable({ type: 'bkill', f: fireId, i: spawnIdx });
       }
+    }
+  }
+
+  broadcastProfile(token: string): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'profile', token });
     }
   }
 
@@ -282,6 +290,9 @@ export class Mesh {
         break;
       case 'chat':
         this.onChat?.(fromId, String(msg.text).slice(0, 200));
+        break;
+      case 'profile':
+        this.onProfile?.(fromId, msg.token);
         break;
     }
   }

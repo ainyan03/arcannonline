@@ -89,8 +89,12 @@ export class NostrSignaling {
   private urls: string[] = [];
   private disposed = false;
 
-  constructor(private readonly topic: string) {
-    this.privkey = schnorr.utils.randomSecretKey();
+  /** @param privkey 永続アカウント用の鍵。省略時は使い捨て鍵を生成する */
+  constructor(
+    private readonly topic: string,
+    privkey?: Uint8Array,
+  ) {
+    this.privkey = privkey ?? schnorr.utils.randomSecretKey();
     this.pubkey = bytesToHex(schnorr.getPublicKey(this.privkey));
   }
 

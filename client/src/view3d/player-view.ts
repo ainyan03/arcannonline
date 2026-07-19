@@ -3,8 +3,8 @@ import type { Appearance } from '../../../shared/src/protocol';
 import {
   colorFromString,
   createBody,
-  createNameSprite,
   HEAD_ANCHOR_Y,
+  NameLabel,
 } from './avatar';
 
 /**
@@ -25,9 +25,10 @@ export class PlayerView {
   private lastEnergyFraction: number | null = null;
   private readonly flashMats: THREE.MeshLambertMaterial[] = [];
   private readonly flightPhase: number;
+  private readonly label: NameLabel;
   private flashing = false;
 
-  constructor(name: string, appearance?: Appearance) {
+  constructor(name: string, appearance?: Appearance, idSeed?: string) {
     // ルートは位置のみを持ち、向き (rotation) は胴体だけに適用する。
     // 名前・HPバーはルート直下に置き、自機の向きで位置が回らないようにする
     this.object = new THREE.Group();
@@ -38,7 +39,8 @@ export class PlayerView {
     this.flightPhase = [...name].reduce((n, ch) => n + ch.charCodeAt(0), 0) * 0.17;
     const headAnchorY = appearance?.a === 1 ? 3.35 : HEAD_ANCHOR_Y;
     this.object.add(this.body);
-    this.object.add(createNameSprite(name, headAnchorY));
+    this.label = new NameLabel(name, headAnchorY, idSeed);
+    this.object.add(this.label.sprite);
     // 被弾フラッシュ用に胴体のマテリアルを収集しておく
     this.body.traverse((o) => {
       const mesh = o as THREE.Mesh;
@@ -79,6 +81,22 @@ export class PlayerView {
     bar.position.y = headAnchorY;
     this.object.add(bar);
     this.setHp(1);
+  }
+
+  /** identicon のシード (ピアID)。自機は room 生成後に判明するため後付けする */
+  setIdSeed(seed: string): void {
+    this.label.setIdSeed(seed);
+  }
+
+  /**
+   * 認証済みアバター画像を読み込んでラベルに反映する。
+   * 読み込み失敗時は identicon のまま (何もしない)。
+   */
+  setAvatarUrl(url: string, verified: boolean): void {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => this.label.setAvatar(img, verified);
+    img.src = url;
   }
 
   sync(x: number, y: number, heading: number, visible = true): void {

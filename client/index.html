@@ -339,6 +339,53 @@
       .panel button:hover {
         background: #57a569;
       }
+      .panel .gh-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 34px;
+        font-size: 13px;
+      }
+      .panel .gh-row button.gh-login {
+        flex: 1;
+        font-size: 13px;
+        padding: 6px 8px;
+        background: #24292f;
+      }
+      .panel .gh-row button.gh-login:hover {
+        background: #32383f;
+      }
+      .panel .gh-row img {
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+      }
+      .panel .gh-row .gh-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .panel .gh-row .gh-badge {
+        color: #57d57a;
+      }
+      .panel .gh-row button.gh-unlink {
+        flex: 0 0 auto;
+        font-size: 12px;
+        padding: 4px 6px;
+        background: none;
+        color: #a8c8e0;
+        text-decoration: underline;
+      }
+      .panel .gh-row button.gh-unlink:hover {
+        background: none;
+        color: #d0e8f8;
+      }
+      .panel .gh-error {
+        margin: -6px 0 0;
+        font-size: 12px;
+        color: #ff9a8a;
+      }
     </style>
   </head>
   <body>

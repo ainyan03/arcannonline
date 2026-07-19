@@ -19,8 +19,9 @@ export class GameRoom {
   private readonly nostr: NostrSignaling;
   private readonly mesh: Mesh;
 
-  constructor() {
-    this.nostr = new NostrSignaling(`${APP_ID}/${ROOM_NAME}`);
+  /** @param privkey 永続アカウント用の鍵。省略時は使い捨て (bot 等) */
+  constructor(privkey?: Uint8Array) {
+    this.nostr = new NostrSignaling(`${APP_ID}/${ROOM_NAME}`, privkey);
     this.mesh = new Mesh(this.nostr);
     this.selfId = this.mesh.selfId;
     this.nostr.connect(NOSTR_RELAYS);
@@ -63,6 +64,11 @@ export class GameRoom {
     this.mesh.onPeerVersion = fn;
   }
 
+  /** GitHub 認証済みプロフィール (Firebase ID トークン) の申告 */
+  set onProfile(fn: ((id: string, token: string) => void) | undefined) {
+    this.mesh.onProfile = fn;
+  }
+
   get peerCount(): number {
     return this.mesh.openCount;
   }
@@ -95,6 +101,10 @@ export class GameRoom {
 
   broadcastBulletKill(fireId: string, spawnIdx: number): void {
     this.mesh.broadcastBulletKill(fireId, spawnIdx);
+  }
+
+  broadcastProfile(token: string): void {
+    this.mesh.broadcastProfile(token);
   }
 
   /** 回復要求: リレー再接続とプレゼンス再発行 (ウォッチドッグから呼ばれる) */

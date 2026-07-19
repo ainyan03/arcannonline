@@ -1,5 +1,7 @@
+import { restoreLogin } from './auth/github';
 import { startBot } from './bot';
 import { Game } from './game/game';
+import { loadIdentityKey } from './net/identity';
 import { installRtcDebug } from './net/rtc-debug';
 import { showJoinOverlay } from './ui/join';
 
@@ -20,8 +22,13 @@ async function boot(): Promise<void> {
     startBot();
     return;
   }
-  const { name, appearance } = await showJoinOverlay();
-  const game = new Game(document.getElementById('app')!, name, appearance);
+  // GitHub ログインの復元は待たない (完了すると join 画面や頭上ラベルに反映される)
+  void restoreLogin();
+  const [{ name, appearance }, privkey] = await Promise.all([
+    showJoinOverlay(),
+    loadIdentityKey(),
+  ]);
+  const game = new Game(document.getElementById('app')!, name, appearance, privkey);
   game.start();
 }
 

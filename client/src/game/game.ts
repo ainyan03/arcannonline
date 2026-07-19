@@ -27,6 +27,9 @@ import {
   type Vec2,
 } from '../../../shared/src/protocol';
 import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
+import { currentAccount, onAccountChange } from '../auth/github';
+import { FIREBASE_PROJECT_ID } from '../auth/firebase-config';
+import { verifyFirebaseToken } from '../auth/verify-token';
 import { GameAudio } from '../audio/game-audio';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
@@ -120,6 +123,10 @@ export class Game {
   private readonly rayTmp = new THREE.Vector3();
   private readonly markerTargets = new Map<string, MarkerTarget>();
   private readonly seenFireIds = new Set<string>();
+  /** ピアごとの最後に受理した profile トークン (再検証の抑止) */
+  private readonly profileTokenByPeer = new Map<string, string>();
+  /** 検証済みだが PlayerView 未生成のピアのアバターURL (state 受信時に適用) */
+  private readonly pendingAvatars = new Map<string, string>();
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -162,6 +169,7 @@ export class Game {
     container: HTMLElement,
     private readonly name: string,
     private readonly appearance?: Appearance,
+    privkey?: Uint8Array,
   ) {
     // 参加ボタンのユーザー操作中に初期化し、ブラウザの自動再生制限を解除する。
     void this.audio.unlock();
@@ -282,7 +290,9 @@ export class Game {
     this.targetRing.visible = false;
     this.world.scene.add(this.targetRing);
 
-    this.room = new GameRoom();
+    this.room = new GameRoom(privkey);
+    // 自機の identicon シード (= ピアID) は room 生成後に判明するため後付け
+    this.playerView.setIdSeed(this.room.selfId);
     const npcNow = performance.now();
     for (let i = 0; i < NPCS_PER_PEER; i++) {
       const sim = new LocalNpcSim(`${this.room.selfId}:npc:${i}`, npcNow);
@@ -296,6 +306,7 @@ export class Game {
     this.room.onPeerJoin = () => {
       this.sendStateNow();
       this.sendNpcsNow();
+      this.sendProfileNow();
     };
     this.room.onState = (id, state) => {
       const now = performance.now();
@@ -303,13 +314,19 @@ export class Game {
       if (!remote) {
         remote = {
           sim: new RemotePlayerSim(state.n, now),
-          view: new PlayerView(state.n, state.ap),
+          view: new PlayerView(state.n, state.ap, id),
           prevHp: state.hp ?? MAX_HP,
           flashUntil: 0,
         };
         remote.view.sync(state.x, state.y, state.h, false);
         this.remotes.set(id, remote);
         this.world.scene.add(remote.view.object);
+        // state より先に profile が届いて検証済みならここで適用する
+        const pendingAvatar = this.pendingAvatars.get(id);
+        if (pendingAvatar) {
+          this.pendingAvatars.delete(id);
+          remote.view.setAvatarUrl(pendingAvatar, true);
+        }
         this.chat.addLine('', `* ${state.n} が参加しました`, true);
         this.audio.playJoin();
         this.updateHud();
@@ -382,6 +399,18 @@ export class Game {
     this.room.onPeerVersion = (_id, version) => {
       if (version > PROTO_VERSION) updateBanner.show();
     };
+
+    // GitHub 認証: 自分のアバターを反映し、ログイン/トークン更新のたびに
+    // ピアへ再配布する。受信側 (onProfile) は署名を独立検証してから表示する
+    this.room.onProfile = (id, token) => this.handleProfile(id, token);
+    const applyOwnAccount = () => {
+      const acc = currentAccount();
+      const picture = acc?.picture;
+      if (picture) this.playerView.setAvatarUrl(picture, true);
+      if (acc) this.sendProfileNow();
+    };
+    applyOwnAccount();
+    onAccountChange(applyOwnAccount);
 
     this.setupInput(container);
 
@@ -1114,6 +1143,28 @@ export class Game {
     if (this.room.peerCount === 0) return;
     this.lastNpcSentAt = performance.now();
     this.room.broadcastNpcs(this.localNpcs.map((npc) => npc.sim.makeState()));
+  }
+
+  /** GitHub 認証トークンを全ピアへ配る (未ログインなら何もしない) */
+  private sendProfileNow(): void {
+    const token = currentAccount()?.token;
+    if (token && this.room.peerCount > 0) this.room.broadcastProfile(token);
+  }
+
+  /**
+   * ピアからの profile 申告。トークンの署名・発行元・期限を Google の
+   * 公開鍵でブラウザ内検証し、通った場合のみ認証済みアバターを表示する
+   */
+  private handleProfile(id: string, token: string): void {
+    if (this.profileTokenByPeer.get(id) === token) return;
+    this.profileTokenByPeer.set(id, token);
+    void verifyFirebaseToken(token, FIREBASE_PROJECT_ID).then((profile) => {
+      // 検証中に別トークンが届いていたら古い結果は捨てる
+      if (!profile?.picture || this.profileTokenByPeer.get(id) !== token) return;
+      const remote = this.remotes.get(id);
+      if (remote) remote.view.setAvatarUrl(profile.picture, true);
+      else this.pendingAvatars.set(id, profile.picture);
+    });
   }
 
   /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
