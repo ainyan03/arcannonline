@@ -36,8 +36,9 @@ export class PlayerView {
       : colorFromString(name);
     this.body = createBody(color, appearance?.s ?? 0, appearance?.a ?? 0);
     this.flightPhase = [...name].reduce((n, ch) => n + ch.charCodeAt(0), 0) * 0.17;
+    const headAnchorY = appearance?.a === 1 ? 3.35 : HEAD_ANCHOR_Y;
     this.object.add(this.body);
-    this.object.add(createNameSprite(name));
+    this.object.add(createNameSprite(name, headAnchorY));
     // 被弾フラッシュ用に胴体のマテリアルを収集しておく
     this.body.traverse((o) => {
       const mesh = o as THREE.Mesh;
@@ -48,7 +49,7 @@ export class PlayerView {
 
     // 足元の影 (接地感を出す)
     const shadow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.55, 24),
+      new THREE.CircleGeometry(0.62, 24),
       new THREE.MeshBasicMaterial({
         color: 0x000000,
         transparent: true,
@@ -75,7 +76,7 @@ export class PlayerView {
     bar.scale.set(1.9, 0.36, 1);
     // 名前と同じアンカー点から、スクリーン空間で下方向へオフセットする
     bar.center.set(0.5, 1.15);
-    bar.position.y = HEAD_ANCHOR_Y;
+    bar.position.y = headAnchorY;
     this.object.add(bar);
     this.setHp(1);
   }
