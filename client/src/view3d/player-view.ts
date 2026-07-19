@@ -23,6 +23,8 @@ export class PlayerView {
   private lastHpFraction = -1;
   /** null のまま (リモート機) なら下段は描かない */
   private lastEnergyFraction: number | null = null;
+  private readonly flashMats: THREE.MeshLambertMaterial[] = [];
+  private flashing = false;
 
   constructor(name: string, appearance?: Appearance) {
     // ルートは位置のみを持ち、向き (rotation) は胴体だけに適用する。
@@ -34,6 +36,13 @@ export class PlayerView {
     this.body = createBody(color, appearance?.s ?? 0, appearance?.a ?? 0);
     this.object.add(this.body);
     this.object.add(createNameSprite(name));
+    // 被弾フラッシュ用に胴体のマテリアルを収集しておく
+    this.body.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && (mesh.material as THREE.MeshLambertMaterial).emissive) {
+        this.flashMats.push(mesh.material as THREE.MeshLambertMaterial);
+      }
+    });
 
     // 足元の影 (接地感を出す)
     const shadow = new THREE.Mesh(
@@ -73,6 +82,16 @@ export class PlayerView {
     this.object.visible = visible;
     this.object.position.set(x, 0, y);
     this.body.rotation.y = -heading;
+  }
+
+  /** 被弾フラッシュ (発光) の ON/OFF。ON の間は白っぽく光る */
+  setFlash(on: boolean): void {
+    if (on === this.flashing) return;
+    this.flashing = on;
+    for (const m of this.flashMats) {
+      m.emissive.setHex(on ? 0xffbbaa : 0x000000);
+      m.emissiveIntensity = on ? 1.2 : 0;
+    }
   }
 
   /** HP 割合 (0..1) をバーに反映する (左端固定で右から左へ減る) */

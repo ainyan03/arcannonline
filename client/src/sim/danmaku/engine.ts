@@ -62,9 +62,15 @@ interface RunEntry {
   owner: string;
 }
 
+/** 弾の消滅理由。collide=弾同士の相殺, hit=キャラへの被弾消費 */
+export type KillCause = 'collide' | 'hit' | 'expire' | 'fifo';
+
 export class BulletEngine {
   /** 弾プール (死んだスロットは再利用される)。読み取り専用で公開 */
   readonly bullets: Bullet[] = [];
+
+  /** 弾が消えた時に呼ばれる (演出用)。sim 本体はこれに依存しない */
+  onKill?: (bullet: Bullet, cause: KillCause) => void;
 
   private readonly runs: RunEntry[] = [];
   private readonly compiled = new Map<string, Program>();
@@ -326,7 +332,7 @@ export class BulletEngine {
 
   /** 外部からの弾の消費 (被弾処理など)。index は bullets 配列上の位置 */
   killAt(index: number): void {
-    this.kill(index);
+    this.kill(index, 'hit');
   }
 
   /** 発射イベントID + 生成順で弾を特定して消す (他クライアントからの消滅通知) */
@@ -336,13 +342,13 @@ export class BulletEngine {
     for (let i = 0; i < bs.length; i++) {
       const b = bs[i];
       if (b.alive && b.spawnIdx === spawnIdx && b.fireId === fireId) {
-        this.kill(i);
+        this.kill(i, 'hit');
         return;
       }
     }
   }
 
-  private kill(index: number): void {
+  private kill(index: number, cause: KillCause = 'expire'): void {
     const b = this.bullets[index];
     if (!b.alive) return;
     b.alive = false;
@@ -351,6 +357,7 @@ export class BulletEngine {
     const n = (this.ownerCounts.get(b.owner) ?? 1) - 1;
     if (n <= 0) this.ownerCounts.delete(b.owner);
     else this.ownerCounts.set(b.owner, n);
+    this.onKill?.(b, cause);
   }
 
   /**
@@ -376,7 +383,7 @@ export class BulletEngine {
         oldestIdx = i;
       }
     }
-    if (oldestIdx >= 0) this.kill(oldestIdx);
+    if (oldestIdx >= 0) this.kill(oldestIdx, 'fifo');
   }
 
   /**
@@ -417,8 +424,8 @@ export class BulletEngine {
               const db = b.dur;
               a.dur -= db;
               b.dur -= da;
-              if (a.dur <= 0) this.kill(i);
-              if (b.dur <= 0) this.kill(j);
+              if (a.dur <= 0) this.kill(i, 'collide');
+              if (b.dur <= 0) this.kill(j, 'collide');
             }
           }
           if (!a.alive) break;

@@ -11,6 +11,7 @@ const BULLET_Y = 0.9;
  */
 export class BulletView {
   private readonly mesh: THREE.InstancedMesh;
+  private readonly halo: THREE.InstancedMesh;
   private readonly mat = new THREE.Matrix4();
   private readonly quat = new THREE.Quaternion();
   private readonly pos = new THREE.Vector3();
@@ -30,33 +31,58 @@ export class BulletView {
       name: string;
     },
   ) {
+    const geometry = new THREE.SphereGeometry(1, 10, 8);
     this.mesh = new THREE.InstancedMesh(
-      new THREE.SphereGeometry(1, 10, 8),
+      geometry,
       new THREE.MeshBasicMaterial({ toneMapped: false }),
       MAX_BULLETS,
     );
-    this.mesh.frustumCulled = false;
-    this.mesh.count = 0;
-    scene.add(this.mesh);
+    // 発光しているように見せるハロー (加算合成の外殻)
+    this.halo = new THREE.InstancedMesh(
+      geometry,
+      new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.3,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+      MAX_BULLETS,
+    );
+    for (const m of [this.mesh, this.halo]) {
+      m.frustumCulled = false;
+      m.count = 0;
+      scene.add(m);
+    }
   }
 
   sync(bullets: readonly Bullet[], selfId: string): void {
     let i = 0;
     for (const b of bullets) {
       if (!b.alive) continue;
+      const color = b.owner === selfId ? this.ownColor : this.ownerColor(b.owner);
       this.pos.set(b.x, BULLET_Y, b.y);
       this.scale.setScalar(b.radius);
       this.mat.compose(this.pos, this.quat, this.scale);
       this.mesh.setMatrixAt(i, this.mat);
-      this.mesh.setColorAt(
-        i,
-        b.owner === selfId ? this.ownColor : this.ownerColor(b.owner),
-      );
+      this.mesh.setColorAt(i, color);
+      this.scale.setScalar(b.radius * 2.0);
+      this.mat.compose(this.pos, this.quat, this.scale);
+      this.halo.setMatrixAt(i, this.mat);
+      this.halo.setColorAt(i, color);
       i++;
     }
     this.mesh.count = i;
+    this.halo.count = i;
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.halo.instanceMatrix.needsUpdate = true;
     if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+    if (this.halo.instanceColor) this.halo.instanceColor.needsUpdate = true;
+  }
+
+  /** 弾の表示色 (パーティクル等の演出と色を合わせるために公開) */
+  colorFor(owner: string, selfId: string): THREE.Color {
+    return owner === selfId ? this.ownColor : this.ownerColor(owner);
   }
 
   /** 所有者ID → 弾色。アバター色を少し白に寄せて発光弾らしくする */

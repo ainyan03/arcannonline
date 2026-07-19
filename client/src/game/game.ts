@@ -32,6 +32,7 @@ import { RemotePlayerSim } from '../sim/remote-player';
 import { BulletView } from '../view3d/bullet-view';
 import { FollowCamera } from '../view3d/camera';
 import { EdgeMarkers, type MarkerTarget } from '../view3d/edge-markers';
+import { Particles } from '../view3d/particles';
 import { PlayerView } from '../view3d/player-view';
 import { createWorld, type World } from '../view3d/world';
 import { cameraRelativeDir, Keyboard } from './input';
@@ -51,9 +52,14 @@ const TAP_PX = 6;
  */
 const TOUCH_GRACE_MS = 120;
 
+/** 被弾フラッシュの長さ */
+const FLASH_MS = 160;
+
 interface Remote {
   sim: RemotePlayerSim;
   view: PlayerView;
+  prevHp: number;
+  flashUntil: number;
 }
 
 export class Game {
@@ -67,7 +73,9 @@ export class Game {
   private readonly hud: HTMLElement;
   private readonly engine = new BulletEngine();
   private readonly bulletView: BulletView;
+  private readonly particles: Particles;
   private readonly markers: EdgeMarkers;
+  private selfFlashUntil = 0;
   private readonly worldPosTmp = new THREE.Vector3();
   private readonly rayTmp = new THREE.Vector3();
   private readonly markerTargets = new Map<string, MarkerTarget>();
@@ -105,7 +113,6 @@ export class Game {
   private readonly chat: ChatUI;
   private readonly editor: ScriptEditorUI;
   private readonly fireBtn: FireButtonUI;
-  private readonly hitFlash: HTMLElement;
   private customSource: string | null = null;
 
   constructor(
@@ -119,6 +126,18 @@ export class Game {
       const sim = this.remotes.get(owner)?.sim;
       return { color: sim?.ap?.c ?? null, name: sim?.name ?? owner };
     });
+    this.particles = new Particles(this.world.scene);
+    // 弾同士の相殺・被弾消費で弾けて消えるエフェクト (寿命切れ等では出さない)
+    this.engine.onKill = (b, cause) => {
+      if (cause === 'collide' || cause === 'hit') {
+        this.particles.burst(
+          b.x,
+          b.y,
+          this.bulletView.colorFor(b.owner, this.room.selfId),
+          b.radius,
+        );
+      }
+    };
     this.markers = new EdgeMarkers(container);
 
     const spawn: Vec2 = {
@@ -147,10 +166,6 @@ export class Game {
       location.reload();
     });
     container.appendChild(leaveBtn);
-
-    this.hitFlash = document.createElement('div');
-    this.hitFlash.className = 'hitflash';
-    container.appendChild(this.hitFlash);
 
     this.chat = new ChatUI(container);
     this.chat.onSend = (text) => {
@@ -212,6 +227,8 @@ export class Game {
         remote = {
           sim: new RemotePlayerSim(state.n, now),
           view: new PlayerView(state.n, state.ap),
+          prevHp: state.hp ?? MAX_HP,
+          flashUntil: 0,
         };
         remote.view.sync(state.x, state.y, state.h, false);
         this.remotes.set(id, remote);
@@ -327,9 +344,10 @@ export class Game {
     this.tickToNow(now);
     this.checkHits(now);
 
-    // 無敵時間中は点滅させる
+    // 無敵時間中は点滅、被弾直後は発光フラッシュ
     const invuln = now < this.player.invulnUntil;
     this.playerView.object.visible = !invuln || Math.floor(now / 120) % 2 === 0;
+    this.playerView.setFlash(now < this.selfFlashUntil);
     this.playerView.setHp(this.player.hp / MAX_HP);
     this.playerView.setEnergy(this.player.energy / ENERGY_MAX);
 
@@ -339,6 +357,13 @@ export class Game {
       if (s.visible) {
         remote.view.sync(s.x, s.y, s.h);
         remote.view.setHp(remote.sim.hp / MAX_HP);
+        // HP減少を検知して被弾フラッシュ (被弾判定は本人のみが行うため、
+        // 他機の被弾はHPの自己申告値の変化から推定する)
+        if (remote.sim.hp < remote.prevHp) {
+          remote.flashUntil = now + FLASH_MS;
+        }
+        remote.prevHp = remote.sim.hp;
+        remote.view.setFlash(now < remote.flashUntil);
         this.markerTargets.set(id, { name: remote.sim.name, x: s.x, z: s.y });
         if (id === this.targetId) {
           this.targetRing.position.set(s.x, 0.05, s.y);
@@ -348,6 +373,7 @@ export class Game {
     this.targetRing.visible = this.targetId !== null;
 
     this.bulletView.sync(this.engine.bullets, this.room.selfId);
+    this.particles.update(dt);
 
     this.camera.update(
       this.worldPosTmp.set(this.player.pos.x, 0, this.player.pos.y),
@@ -386,7 +412,7 @@ export class Game {
       this.engine.killAt(i); // 当たった弾は消費する
       // 他クライアントにも消滅を通知 (発射イベントID + 生成順で特定)
       this.room.broadcastBulletKill(b.fireId, b.spawnIdx);
-      this.flashHit();
+      this.selfFlashUntil = now + FLASH_MS;
       if (dead) {
         died = true;
         killerId = b.owner;
@@ -407,11 +433,6 @@ export class Game {
       this.playerView.sync(this.player.pos.x, this.player.pos.y, this.player.heading);
       this.sendStateNow();
     }
-  }
-
-  private flashHit(): void {
-    this.hitFlash.classList.add('on');
-    window.setTimeout(() => this.hitFlash.classList.remove('on'), 120);
   }
 
   // --- 弾幕 -----------------------------------------------------------------
