@@ -128,8 +128,12 @@ export class Game {
   private readonly seenFireIds = new Set<string>();
   /** ピアごとの最後に受理した profile トークン (再検証の抑止) */
   private readonly profileTokenByPeer = new Map<string, string>();
-  /** 検証済みだが PlayerView 未生成のピアのプロフィール (state 受信時に適用) */
-  private readonly pendingProfiles = new Map<string, VerifiedProfile>();
+  /**
+   * ピアごとの検証済みプロフィールのキャッシュ。リモート表示は無通信で
+   * 一時除去→再作成されるため、消費型でなく保持し続けて再作成時にも適用する
+   * (ピアのメッシュ離脱時に破棄。再接続時は相手が profile を再送してくる)
+   */
+  private readonly verifiedProfiles = new Map<string, VerifiedProfile>();
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -324,12 +328,10 @@ export class Game {
         remote.view.sync(state.x, state.y, state.h, false);
         this.remotes.set(id, remote);
         this.world.scene.add(remote.view.object);
-        // state より先に profile が届いて検証済みならここで適用する
-        const pending = this.pendingProfiles.get(id);
-        if (pending) {
-          this.pendingProfiles.delete(id);
-          this.applyVerifiedProfile(remote.view, pending);
-        }
+        // 検証済みプロフィールがあれば適用する (profile が state より先に
+        // 届いた場合と、無通信で一時除去された表示の再作成時の両方をカバー)
+        const profile = this.verifiedProfiles.get(id);
+        if (profile) this.applyVerifiedProfile(remote.view, profile);
         this.chat.addLine('', `* ${state.n} が参加しました`, true);
         this.audio.playJoin();
         this.updateHud();
@@ -395,6 +397,10 @@ export class Game {
       }
       this.removeRemote(id);
       this.removeRemoteNpcsOwnedBy(id);
+      // メッシュから居なくなったピアの認証キャッシュは破棄する
+      // (再接続時は接続確立の契機で相手が profile を送り直してくる)
+      this.verifiedProfiles.delete(id);
+      this.profileTokenByPeer.delete(id);
       this.updateHud();
     };
     // 自分より新しいバージョンを申告するピアが居たらアップデートを促す
@@ -1167,9 +1173,9 @@ export class Game {
       // 検証中に別トークンが届いていたら古い結果は捨てる
       if (!profile || this.profileTokenByPeer.get(id) !== token) return;
       if (!profile.name && !profile.picture) return;
+      this.verifiedProfiles.set(id, profile);
       const remote = this.remotes.get(id);
       if (remote) this.applyVerifiedProfile(remote.view, profile);
-      else this.pendingProfiles.set(id, profile);
     });
   }
 

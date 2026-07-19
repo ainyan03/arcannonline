@@ -39,6 +39,8 @@ export class Peer {
   private readonly pc: RTCPeerConnection;
   private readonly stateCh: RTCDataChannel;
   private readonly reliableCh: RTCDataChannel;
+  /** reliable チャネル open 前の送信を保持するキュー */
+  private readonly reliableQueue: string[] = [];
   private readonly polite: boolean;
   private makingOffer = false;
   private ignoreOffer = false;
@@ -82,6 +84,13 @@ export class Peer {
       } catch {
         /* 同上 */
       }
+    };
+    // 接続確立イベント (state チャネルの open) 時点では reliable チャネルが
+    // まだ open していないことがある。その間の送信 (初回 PEX・profile 等) を
+    // 捨てず、open したときにまとめて流す
+    this.reliableCh.onopen = () => {
+      for (const data of this.reliableQueue) this.reliableCh.send(data);
+      this.reliableQueue.length = 0;
     };
 
     // オファーは impolite 側 (id が小さい側) のみが出す。glare が起きないため
@@ -157,8 +166,15 @@ export class Peer {
   }
 
   sendReliable(msg: ReliableMessage): void {
+    const data = JSON.stringify(msg);
     if (this.reliableCh.readyState === 'open') {
-      this.reliableCh.send(JSON.stringify(msg));
+      this.reliableCh.send(data);
+    } else if (
+      this.reliableCh.readyState === 'connecting' &&
+      this.reliableQueue.length < 64
+    ) {
+      // open 前は取りこぼさずキューする (閉じたチャネルへは送らない)
+      this.reliableQueue.push(data);
     }
   }
 
