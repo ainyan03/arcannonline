@@ -39,6 +39,12 @@ describe('protocol validation', () => {
     };
     expect(parseFireEvent({ ...base, tx: 2, ty: 3 })).toMatchObject({ tx: 2, ty: 3 });
     expect(parseFireEvent({ ...base, tx: 2 })).toBeNull();
+    expect(parseFireEvent({ ...base, vx: 4, vy: -3 })).toMatchObject({
+      vx: 4,
+      vy: -3,
+    });
+    expect(parseFireEvent({ ...base, vx: 4 })).toBeNull();
+    expect(parseFireEvent({ ...base, vx: 9, vy: 0 })).toBeNull();
     expect(parseFireEvent({
       ...base,
       target: `${peerId}:npc:0`,

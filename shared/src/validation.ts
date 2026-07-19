@@ -5,6 +5,7 @@ import {
   MAX_SCRIPT_SRC_LEN,
   NPC_MAX_HP,
   NPCS_PER_PEER,
+  PLAYER_SPEED,
   type Appearance,
   type FireEvent,
   type NostrContent,
@@ -183,6 +184,14 @@ export function parseFireEvent(value: unknown): FireEvent | null {
   if (!shortString(v.script, 64) || v.script.length === 0 || !integer(v.seed, 0, 0xffff_ffff)) return null;
   if (!finite(v.x, -FIELD_SIZE, FIELD_SIZE) || !finite(v.y, -FIELD_SIZE, FIELD_SIZE)) return null;
   if (!finite(v.dir, -Math.PI * 2, Math.PI * 2) || !finite(v.at, 0, 10_000_000_000_000)) return null;
+  const hasVelocity = v.vx !== undefined || v.vy !== undefined;
+  if (
+    hasVelocity &&
+    (!finite(v.vx, -PLAYER_SPEED, PLAYER_SPEED) ||
+      !finite(v.vy, -PLAYER_SPEED, PLAYER_SPEED))
+  ) {
+    return null;
+  }
   if (v.target !== undefined && !isPeerId(v.target) && !isNpcId(v.target)) return null;
   if (v.src !== undefined && !shortString(v.src, MAX_SCRIPT_SRC_LEN)) return null;
   if (v.npc !== undefined && !isNpcId(v.npc)) return null;
@@ -197,6 +206,8 @@ export function parseFireEvent(value: unknown): FireEvent | null {
     x: v.x,
     y: v.y,
     dir: v.dir,
+    vx: v.vx as number | undefined,
+    vy: v.vy as number | undefined,
     at: v.at,
     target: v.target as string | undefined,
     tx: v.tx as number | undefined,

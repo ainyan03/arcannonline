@@ -80,6 +80,11 @@ export class LocalPlayerSim {
     return true;
   }
 
+  /** 発射イベントへ固定保存するため、現在速度のコピーを返す。 */
+  getVelocity(): Vec2 {
+    return { ...this.vel };
+  }
+
   /** @returns 位置または向きが変化したか */
   update(dt: number, move: Vec2): boolean {
     this.energy = Math.min(this.energy + ENERGY_REGEN_PER_SEC * dt, ENERGY_MAX);

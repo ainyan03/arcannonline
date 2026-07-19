@@ -11,6 +11,7 @@ import {
   NPC_FIRE_SCRIPT_SOURCE,
 } from '../../../shared/src/npc-scripts';
 import {
+  BULLET_INHERIT_VELOCITY,
   ENERGY_MAX,
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
@@ -714,6 +715,7 @@ export class Game {
     // 発射位置と照準位置はイベント生成時点で固定する。各受信者が持つ最新stateは
     // 到着時刻が異なるため、実行中に参照すると同じseedでも弾道が分岐してしまう。
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
+    const sourceVelocity = this.player.getVelocity();
     const targetPos = this.resolveTargetPosition(this.targetId ?? undefined);
     const originResolver = () => origin;
     const targetResolver = () => targetPos;
@@ -737,6 +739,8 @@ export class Game {
       x: origin.x,
       y: origin.y,
       dir: this.player.heading,
+      vx: sourceVelocity.x,
+      vy: sourceVelocity.y,
       at: Date.now(),
       target: this.targetId ?? undefined,
       tx: targetPos?.x,
@@ -754,6 +758,10 @@ export class Game {
       targetResolver,
       0,
       ev.id,
+      {
+        x: sourceVelocity.x * BULLET_INHERIT_VELOCITY,
+        y: sourceVelocity.y * BULLET_INHERIT_VELOCITY,
+      },
     );
     this.room.broadcastFire(ev);
     this.audio.playFire();
@@ -799,6 +807,10 @@ export class Game {
       () => targetPos,
       catchup,
       ev.id,
+      {
+        x: (ev.vx ?? 0) * BULLET_INHERIT_VELOCITY,
+        y: (ev.vy ?? 0) * BULLET_INHERIT_VELOCITY,
+      },
     );
     if (ev.npc) {
       this.audio.playEnemyFire(

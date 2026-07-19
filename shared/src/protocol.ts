@@ -52,6 +52,9 @@ export const MAX_BULLETS = 8192;
 /** 発射のクールダウン */
 export const FIRE_COOLDOWN_MS = 400;
 
+/** 発射時に弾へ引き継ぐ自機速度の割合 */
+export const BULLET_INHERIT_VELOCITY = 0.5;
+
 /** 受信した発射イベントを過去に遡って再生する上限 (tick)。
  * 遅延は時計ずれ補正済みの推定値を使うため、正常時は数 tick に収まる */
 export const MAX_FIRE_CATCHUP_TICKS = TICK_RATE;
@@ -211,6 +214,9 @@ export interface FireEvent {
   y: number;
   /** 発射時の向き (rad) */
   dir: number;
+  /** 発射時の自機速度。弾の初速へ一定割合を加算する */
+  vx?: number;
+  vy?: number;
   /** 発射時刻 (epoch ms) */
   at: number;
   /** 狙い撃ちのターゲット (ピアID)。DSL の aim / tdist が参照する */
