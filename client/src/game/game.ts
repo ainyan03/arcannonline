@@ -137,6 +137,17 @@ export class Game {
     this.hud.className = 'hud';
     container.appendChild(this.hud);
 
+    // 入り直しボタン: 自動再参加を解除して参加画面 (名前・見た目の変更) に戻る
+    const leaveBtn = document.createElement('div');
+    leaveBtn.className = 'leave-btn';
+    leaveBtn.textContent = '入り直す';
+    leaveBtn.addEventListener('pointerdown', () => {
+      sessionStorage.removeItem('blt-autojoin');
+      this.room.leave();
+      location.reload();
+    });
+    container.appendChild(leaveBtn);
+
     this.hitFlash = document.createElement('div');
     this.hitFlash.className = 'hitflash';
     container.appendChild(this.hitFlash);
