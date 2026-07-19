@@ -153,10 +153,12 @@ export const INVULN_MS = 2_000;
 export const ENERGY_MAX = 200;
 export const ENERGY_REGEN_PER_SEC = 15;
 
-/** 1発あたりのコスト係数: base + perDur×(耐久-1) + perRadius×max(半径-0.4, 0) */
+/** 1発あたりのコスト係数: base + perDur×(耐久-1) + perRadius×max(半径-基準, 0) */
 export const BULLET_COST_BASE = 0.5;
 export const BULLET_COST_PER_DUR = 0.5;
-export const BULLET_COST_PER_RADIUS = 2;
+export const BULLET_COST_PER_RADIUS = 4;
+/** コスト計算の基準半径 (= fire() の既定半径) */
+export const BULLET_BASE_RADIUS = 0.2;
 
 /**
  * オーナーごとの弾の同時存在数上限 (エネルギーと併用の安全弁)。

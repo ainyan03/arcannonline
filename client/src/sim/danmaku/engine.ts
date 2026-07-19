@@ -2,6 +2,7 @@
 // 描画/通信に依存しない純粋なモジュール。固定タイムステップ (TICK_RATE) で
 // tick() を呼ぶこと。
 import {
+  BULLET_BASE_RADIUS,
   BULLET_COST_BASE,
   BULLET_COST_PER_DUR,
   BULLET_COST_PER_RADIUS,
@@ -24,11 +25,11 @@ function clampNum(v: number, min: number, max: number): number {
 /** 1発あたりのエネルギーコスト (spawn と同じクランプ後の値で計算する) */
 export function bulletCost(dur: number, radius: number): number {
   const d = clampNum(dur, 1, 1000);
-  const r = clampNum(radius, 0.1, 0.9);
+  const r = clampNum(radius, 0.05, 0.9);
   return (
     BULLET_COST_BASE +
     BULLET_COST_PER_DUR * (d - 1) +
-    BULLET_COST_PER_RADIUS * Math.max(r - 0.4, 0)
+    BULLET_COST_PER_RADIUS * Math.max(r - BULLET_BASE_RADIUS, 0)
   );
 }
 const CULL_BOUND = FIELD_SIZE / 2 + 10;
@@ -313,7 +314,7 @@ export class BulletEngine {
       vx,
       vy,
       dur: Math.min(Math.max(dur, 1), 1000),
-      radius: Math.min(Math.max(radius, 0.1), 0.9),
+      radius: Math.min(Math.max(radius, 0.05), 0.9),
       owner,
       ttl,
       fireId,

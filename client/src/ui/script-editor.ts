@@ -5,7 +5,7 @@ const TEMPLATE = `// 自作弾幕スクリプト (E で開閉)
 // 変数: dir(自機向き) aim(ターゲット方向) tdist(距離) t rand(a,b)
 let a = aim;
 loop (24) {
-  fire(a + rand(0-5, 5), 14, 1, 0.4);
+  fire(a + rand(0-5, 5), 14, 1, 0.2);
   a = a + 15;
   wait(4);
 }

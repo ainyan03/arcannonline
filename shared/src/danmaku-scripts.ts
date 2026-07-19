@@ -31,7 +31,7 @@ export const DANMAKU_SCRIPTS: Record<string, DanmakuScript> = {
 let n = 24;
 let i = 0;
 loop (n) {
-  fire(dir + i * 360 / n, 12, 2, 0.5);
+  fire(dir + i * 360 / n, 12, 2, 0.25);
   i = i + 1;
 }
 `,
@@ -42,8 +42,8 @@ loop (n) {
 // シーケンス型の見本: 約1回転ぶん回りながら撃つ
 let a = dir;
 loop (26) {
-  fire(a, 10, 1, 0.4);
-  fire(a + 180, 10, 1, 0.4);
+  fire(a, 10, 1, 0.2);
+  fire(a + 180, 10, 1, 0.2);
   a = a + 14;
   wait(2);
 }
@@ -53,7 +53,7 @@ loop (26) {
     name: '前方ショット',
     source: `
 loop (6) {
-  fire(dir + rand(0 - 25, 25), rand(10, 18), 1, 0.35);
+  fire(dir + rand(0 - 25, 25), rand(10, 18), 1, 0.18);
 }
 `,
   },
@@ -61,9 +61,9 @@ loop (6) {
     name: '狙い3way',
     source: `
 // aim は発射時のターゲット方向を追尾照準する
-fire(aim - 10, 16, 1, 0.4);
-fire(aim, 18, 2, 0.45);
-fire(aim + 10, 16, 1, 0.4);
+fire(aim - 10, 16, 1, 0.2);
+fire(aim, 18, 2, 0.22);
+fire(aim + 10, 16, 1, 0.2);
 `,
   },
 };

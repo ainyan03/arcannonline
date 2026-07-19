@@ -128,7 +128,7 @@ function callFn(name: string, args: number[], st: RunState): number {
         args[0] ?? 0,
         args[1] ?? 10,
         args[2] ?? 1,
-        args[3] ?? 0.4,
+        args[3] ?? 0.2,
         args[4] ?? 60,
       );
       return 0;
