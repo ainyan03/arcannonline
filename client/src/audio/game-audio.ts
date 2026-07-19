@@ -1,5 +1,9 @@
 const STORAGE_KEY = 'arcn-sound-enabled';
 
+// 個別音量が控えめ (0.035〜0.16) なので、マスターで底上げする。
+// 音の重なりによるクリップはコンプレッサーで抑える。
+const MASTER_VOLUME = 0.6;
+
 /**
  * 外部音源を使わない小さなWeb Audio効果音システム。
  * 大量の弾衝突で発音数が増えすぎないよう、種類ごとにレート制限する。
@@ -25,7 +29,7 @@ export class GameAudio {
     this.soundEnabled = !this.soundEnabled;
     localStorage.setItem(STORAGE_KEY, this.soundEnabled ? '1' : '0');
     if (this.soundEnabled) void this.unlock();
-    if (this.master) this.master.gain.value = this.soundEnabled ? 0.2 : 0;
+    if (this.master) this.master.gain.value = this.soundEnabled ? MASTER_VOLUME : 0;
     return this.soundEnabled;
   }
 
@@ -39,8 +43,14 @@ export class GameAudio {
         return;
       }
       this.master = this.context.createGain();
-      this.master.gain.value = 0.2;
-      this.master.connect(this.context.destination);
+      this.master.gain.value = MASTER_VOLUME;
+      const limiter = this.context.createDynamicsCompressor();
+      limiter.threshold.value = -12;
+      limiter.knee.value = 12;
+      limiter.ratio.value = 12;
+      limiter.attack.value = 0.002;
+      limiter.release.value = 0.15;
+      this.master.connect(limiter).connect(this.context.destination);
       this.noiseBuffer = this.makeNoiseBuffer(this.context);
     }
     if (this.context.state === 'suspended') {
