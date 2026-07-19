@@ -444,6 +444,10 @@ export class Game {
         : (DANMAKU_SCRIPTS[this.scriptId]?.source ?? null);
     if (!source) return;
 
+    // 発射ゲート: 前の発射指示 (自分のスクリプト) が完了するまで重ねられない。
+    // 多段シーケンスの弾幕が意図した形のまま展開されるようにする
+    if (this.engine.ownerHasRun(this.room.selfId)) return;
+
     const seed = (Math.random() * 0x100000000) >>> 0;
     const targetResolver = this.makeTargetResolver(this.targetId ?? undefined);
 
@@ -766,7 +770,9 @@ export class Game {
     this.fireBtn.setScriptName(scriptName);
     const estCost = this.estimateSelectedCost();
     this.fireBtn.setEnabled(
-      estCost !== null && this.player.energy >= estCost,
+      estCost !== null &&
+        this.player.energy >= estCost &&
+        !this.engine.ownerHasRun(this.room.selfId),
     );
     const targetName = this.targetId
       ? (this.remotes.get(this.targetId)?.sim.name ?? '?')

@@ -59,6 +59,7 @@ export interface Bullet {
 
 interface RunEntry {
   run: ScriptRun;
+  owner: string;
 }
 
 export class BulletEngine {
@@ -226,7 +227,15 @@ export class BulletEngine {
     }
     pendingAdvance = 0;
 
-    if (!run.done) this.runs.push({ run });
+    if (!run.done) this.runs.push({ run, owner });
+  }
+
+  /** 指定オーナーの実行中スクリプトがあるか (発射の重ね掛け防止に使う) */
+  ownerHasRun(owner: string): boolean {
+    for (const entry of this.runs) {
+      if (entry.owner === owner) return true;
+    }
+    return false;
   }
 
   tick(): void {
