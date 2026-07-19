@@ -13,6 +13,13 @@ import {
 
 const BOUND = FIELD_SIZE / 2 - 1;
 
+/** 速度が目標速度へ追従する速さ (1/s)。小さいほど慣性が強く柔らかい動き */
+const ACCEL_RATE = 8;
+/** タップ移動の到着減速: 残距離×この係数まで速度を落とす */
+const ARRIVE_GAIN = 4;
+/** これ未満の速度は停止とみなす */
+const STOP_EPS = 0.05;
+
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
 }
@@ -76,27 +83,46 @@ export class LocalPlayerSim {
   /** @returns 位置または向きが変化したか */
   update(dt: number, move: Vec2): boolean {
     this.energy = Math.min(this.energy + ENERGY_REGEN_PER_SEC * dt, ENERGY_MAX);
-    let mx = move.x;
-    let my = move.y;
-    if (mx !== 0 || my !== 0) {
-      this.target = null; // キー入力を優先し自動移動を解除
+
+    // 目標速度を決める (入力方向 or タップ地点への到着減速つき追従)
+    let targetVx = 0;
+    let targetVy = 0;
+    if (move.x !== 0 || move.y !== 0) {
+      this.target = null; // キー/スティック入力を優先し自動移動を解除
+      targetVx = move.x * PLAYER_SPEED;
+      targetVy = move.y * PLAYER_SPEED;
     } else if (this.target) {
       const dx = this.target.x - this.pos.x;
       const dy = this.target.y - this.pos.y;
       const d = Math.hypot(dx, dy);
-      if (d < 0.3) {
+      if (d < 0.15) {
         this.target = null;
       } else {
-        mx = dx / d;
-        my = dy / d;
+        // 到着間際は減速して行き過ぎ (目標地点の周回) を防ぐ
+        const speed = Math.min(PLAYER_SPEED, d * ARRIVE_GAIN);
+        targetVx = (dx / d) * speed;
+        targetVy = (dy / d) * speed;
       }
     }
-    this.vel.x = mx * PLAYER_SPEED;
-    this.vel.y = my * PLAYER_SPEED;
-    if (mx === 0 && my === 0) return false;
+
+    // 慣性: 速度を目標速度へ指数的に追従させる。急な方向転換では
+    // 速度ベクトルが徐々に回るため、軌跡が曲線を描く
+    const k = Math.min(1, dt * ACCEL_RATE);
+    this.vel.x += (targetVx - this.vel.x) * k;
+    this.vel.y += (targetVy - this.vel.y) * k;
+
+    const speed = Math.hypot(this.vel.x, this.vel.y);
+    if (speed < STOP_EPS) {
+      this.vel.x = 0;
+      this.vel.y = 0;
+      return false;
+    }
     this.pos.x = clamp(this.pos.x + this.vel.x * dt, -BOUND, BOUND);
     this.pos.y = clamp(this.pos.y + this.vel.y * dt, -BOUND, BOUND);
-    this.heading = Math.atan2(my, mx);
+    // 向きは実際の速度ベクトルから求める (旋回も滑らかになる)
+    if (speed > 0.5) {
+      this.heading = Math.atan2(this.vel.y, this.vel.x);
+    }
     return true;
   }
 
