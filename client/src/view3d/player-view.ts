@@ -24,6 +24,7 @@ export class PlayerView {
   /** null のまま (リモート機) なら下段は描かない */
   private lastEnergyFraction: number | null = null;
   private readonly flashMats: THREE.MeshLambertMaterial[] = [];
+  private readonly flightPhase: number;
   private flashing = false;
 
   constructor(name: string, appearance?: Appearance) {
@@ -34,6 +35,7 @@ export class PlayerView {
       ? new THREE.Color(appearance.c)
       : colorFromString(name);
     this.body = createBody(color, appearance?.s ?? 0, appearance?.a ?? 0);
+    this.flightPhase = [...name].reduce((n, ch) => n + ch.charCodeAt(0), 0) * 0.17;
     this.object.add(this.body);
     this.object.add(createNameSprite(name));
     // 被弾フラッシュ用に胴体のマテリアルを収集しておく
@@ -82,6 +84,13 @@ export class PlayerView {
     this.object.visible = visible;
     this.object.position.set(x, 0, y);
     this.body.rotation.y = -heading;
+  }
+
+  /** 杖/箒で浮遊しているよう、描画だけを緩やかに上下させる。 */
+  animate(now: number): void {
+    const wave = Math.sin(now * 0.003 + this.flightPhase);
+    this.body.position.y = 0.24 + wave * 0.07;
+    this.body.rotation.z = wave * 0.025;
   }
 
   /** 被弾フラッシュ (発光) の ON/OFF。ON の間は白っぽく光る */
