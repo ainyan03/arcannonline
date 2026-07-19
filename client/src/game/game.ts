@@ -11,6 +11,7 @@ import {
   NPC_FIRE_SCRIPT_SOURCE,
 } from '../../../shared/src/npc-scripts';
 import {
+  BULLET_INHERIT_VELOCITY,
   ENERGY_MAX,
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
@@ -18,6 +19,7 @@ import {
   MAX_SCRIPT_SRC_LEN,
   NPC_STATE_INTERVAL_MS,
   NPCS_PER_PEER,
+  PROTO_VERSION,
   STATE_INTERVAL_MS,
   TICK_MS,
   type Appearance,
@@ -35,6 +37,7 @@ import { ChatUI } from '../ui/chat';
 import { FireButtonUI } from '../ui/fire-button';
 import { ScriptEditorUI } from '../ui/script-editor';
 import { StickUI } from '../ui/stick';
+import { UpdateBannerUI } from '../ui/update-banner';
 import { LocalPlayerSim } from '../sim/local-player';
 import { RemotePlayerSim } from '../sim/remote-player';
 import {
@@ -57,6 +60,13 @@ const SPAWN_RANGE = 30;
 
 /** この時間 state を受信しないリモートはゴーストとみなして除去する */
 const STALE_REMOTE_MS = 10_000;
+
+/**
+ * この時間なんの入力もなければ AFK とみなして自動退室する。
+ * バックグラウンドタブは生存維持で他画面に残り続けるため、放置された
+ * タブが「動かないキャラ」として溜まり続けるのを防ぐ (bot モードは対象外)
+ */
+const AFK_TIMEOUT_MS = 300_000;
 
 /** タップ判定: この時間・移動量以内の単押しをタップとみなす (ドラッグと区別) */
 const TAP_MS = 400;
@@ -117,6 +127,7 @@ export class Game {
   private fps = 0;
   private lastSentAt = 0;
   private lastPeerAt = performance.now();
+  private lastInputAt = performance.now();
   private rejoinBackoffMs = 20_000;
   private lastTickTime = performance.now();
   private lastNpcUpdate = performance.now();
@@ -366,8 +377,25 @@ export class Game {
       this.removeRemoteNpcsOwnedBy(id);
       this.updateHud();
     };
+    // 自分より新しいバージョンを申告するピアが居たらアップデートを促す
+    const updateBanner = new UpdateBannerUI(container);
+    this.room.onPeerVersion = (_id, version) => {
+      if (version > PROTO_VERSION) updateBanner.show();
+    };
 
     this.setupInput(container);
+
+    // AFK 判定用の入力検知。チャット入力欄は keydown を stopPropagation
+    // するため、capture 段階で拾ってあらゆる操作を活動として数える
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+      window.addEventListener(
+        type,
+        () => {
+          this.lastInputAt = performance.now();
+        },
+        { capture: true, passive: true },
+      );
+    }
 
     window.addEventListener('resize', () => {
       this.world.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -408,14 +436,26 @@ export class Game {
       if (now - this.lastNpcSentAt >= NPC_STATE_INTERVAL_MS) this.sendNpcsNow();
       // 弾幕 tick と HUD は rAF (描画) 停止中のバックグラウンドでも進める
       this.tickToNow(now);
+      // 被弾判定も rAF 停止中に止めない。判定を rAF だけに置くと、裏に
+      // 回ったタブが「攻撃の効かない置物」として他画面に残り続けてしまう
+      this.checkNpcHits(now);
+      this.checkHits(now);
       this.updateHud();
     }, STATE_INTERVAL_MS);
 
     // 回復ウォッチドッグ: ピアを長時間発見できない場合は回復を要求する。
     // (間隔は指数バックオフで最大5分まで延ばし、リレーへの負荷増を防ぐ)
     window.setInterval(() => {
-      // 長時間無通信のリモートは死んだ接続の残骸とみなして除去する
       const now = performance.now();
+      // 長時間入力がなければ AFK として退室し、参加画面へ戻る
+      // (放置タブのキャラが他画面に残り続けるのを防ぐ)
+      if (now - this.lastInputAt > AFK_TIMEOUT_MS) {
+        sessionStorage.removeItem('arcn-autojoin');
+        this.room.leave();
+        location.reload();
+        return;
+      }
+      // 長時間無通信のリモートは死んだ接続の残骸とみなして除去する
       for (const [id, remote] of this.remotes) {
         if (now - remote.sim.lastSeenAt > STALE_REMOTE_MS) {
           console.debug(`[game] remove stale remote ${id.slice(0, 8)}`);
@@ -714,6 +754,7 @@ export class Game {
     // 発射位置と照準位置はイベント生成時点で固定する。各受信者が持つ最新stateは
     // 到着時刻が異なるため、実行中に参照すると同じseedでも弾道が分岐してしまう。
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
+    const sourceVelocity = this.player.getVelocity();
     const targetPos = this.resolveTargetPosition(this.targetId ?? undefined);
     const originResolver = () => origin;
     const targetResolver = () => targetPos;
@@ -737,6 +778,8 @@ export class Game {
       x: origin.x,
       y: origin.y,
       dir: this.player.heading,
+      vx: sourceVelocity.x,
+      vy: sourceVelocity.y,
       at: Date.now(),
       target: this.targetId ?? undefined,
       tx: targetPos?.x,
@@ -754,6 +797,10 @@ export class Game {
       targetResolver,
       0,
       ev.id,
+      {
+        x: sourceVelocity.x * BULLET_INHERIT_VELOCITY,
+        y: sourceVelocity.y * BULLET_INHERIT_VELOCITY,
+      },
     );
     this.room.broadcastFire(ev);
     this.audio.playFire();
@@ -799,6 +846,10 @@ export class Game {
       () => targetPos,
       catchup,
       ev.id,
+      {
+        x: (ev.vx ?? 0) * BULLET_INHERIT_VELOCITY,
+        y: (ev.vy ?? 0) * BULLET_INHERIT_VELOCITY,
+      },
     );
     if (ev.npc) {
       this.audio.playEnemyFire(

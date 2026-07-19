@@ -33,6 +33,25 @@ describe('BulletEngine', () => {
       .toEqual([1, 2, 3]);
   });
 
+  it('adds the firing source velocity to every spawned bullet', () => {
+    const engine = new BulletEngine();
+    engine.startScript(
+      'fire(0, 10, 1, 0.2);',
+      1,
+      () => ({ x: 0, y: 0 }),
+      0,
+      'owner',
+      undefined,
+      0,
+      'fire-id',
+      { x: 3, y: -2 },
+    );
+    engine.tick();
+    const bullet = engine.bullets.find((b) => b.alive);
+    expect(bullet?.vx).toBeCloseTo(13);
+    expect(bullet?.vy).toBeCloseTo(-2);
+  });
+
   it('rejects scripts that cannot finish within the duration budget', () => {
     const engine = new BulletEngine();
     expect(engine.estimateCost('wait(999999);', 1, 0, () => ({ x: 0, y: 0 })))

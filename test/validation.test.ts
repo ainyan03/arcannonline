@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseAppearance,
   parseFireEvent,
+  parseNostrContent,
   parseRealtimeMessage,
   parseReliableMessage,
   parseStatePayload,
@@ -32,6 +33,18 @@ describe('protocol validation', () => {
     expect(parseReliableMessage({ type: 'pex', peers: Array(33).fill(peerId) })).toBeNull();
   });
 
+  it('carries an optional protocol version in presence and PEX', () => {
+    expect(parseNostrContent({ t: 'presence' })).toEqual({ t: 'presence' });
+    expect(parseNostrContent({ t: 'presence', v: 2 }))
+      .toMatchObject({ t: 'presence', v: 2 });
+    expect(parseNostrContent({ t: 'presence', v: 0 })).toBeNull();
+    expect(parseNostrContent({ t: 'presence', v: 1.5 })).toBeNull();
+    expect(parseReliableMessage({ type: 'pex', peers: [peerId], v: 3 }))
+      .toMatchObject({ type: 'pex', v: 3 });
+    expect(parseReliableMessage({ type: 'pex', peers: [peerId], v: -1 }))
+      .toBeNull();
+  });
+
   it('requires a complete target position snapshot', () => {
     const base = {
       id: 'fire-1', script: 'ring', seed: 1, x: 0, y: 0, dir: 0,
@@ -39,6 +52,12 @@ describe('protocol validation', () => {
     };
     expect(parseFireEvent({ ...base, tx: 2, ty: 3 })).toMatchObject({ tx: 2, ty: 3 });
     expect(parseFireEvent({ ...base, tx: 2 })).toBeNull();
+    expect(parseFireEvent({ ...base, vx: 4, vy: -3 })).toMatchObject({
+      vx: 4,
+      vy: -3,
+    });
+    expect(parseFireEvent({ ...base, vx: 4 })).toBeNull();
+    expect(parseFireEvent({ ...base, vx: 9, vy: 0 })).toBeNull();
     expect(parseFireEvent({
       ...base,
       target: `${peerId}:npc:0`,

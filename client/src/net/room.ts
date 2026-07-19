@@ -58,6 +58,11 @@ export class GameRoom {
     this.mesh.onBulletKill = fn;
   }
 
+  /** ピアが申告したプロトコルバージョンの通知 (更新案内バナーの契機) */
+  set onPeerVersion(fn: ((id: string, version: number) => void) | undefined) {
+    this.mesh.onPeerVersion = fn;
+  }
+
   get peerCount(): number {
     return this.mesh.openCount;
   }

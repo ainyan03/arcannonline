@@ -175,6 +175,7 @@ export class BulletEngine {
    * @param targetPos ターゲットの現在位置を返す関数 (未指定なら null)。
    *   DSL の aim / tdist が評価のたびに参照する
    * @param catchupTicks 受信遅延分を過去に遡って再生する tick 数 (ローカル発射は 0)
+   * @param inheritedVelocity 発射元から引き継ぐ固定速度。生成される全弾へ加算する
    */
   startScript(
     source: string,
@@ -185,6 +186,7 @@ export class BulletEngine {
     targetPos: () => Vec2 | null = () => null,
     catchupTicks = 0,
     fireId = '',
+    inheritedVelocity: Vec2 = { x: 0, y: 0 },
   ): void {
     let program: Program;
     try {
@@ -205,7 +207,7 @@ export class BulletEngine {
         const p = origin();
         this.spawn(
           p.x, p.y, angleDeg, speed, dur, radius, owner, pendingAdvance,
-          fireId, spawnCounter++, lifeSec,
+          fireId, spawnCounter++, lifeSec, inheritedVelocity,
         );
       },
       aim: () => {
@@ -286,6 +288,7 @@ export class BulletEngine {
     fireId: string,
     spawnIdx: number,
     lifeSec = 60,
+    inheritedVelocity: Vec2 = { x: 0, y: 0 },
   ): void {
     if (this.alive >= this.maxBullets) return;
     // 残存時間 (追いつき再生で既に寿命切れの弾は生成しない)
@@ -302,8 +305,8 @@ export class BulletEngine {
     }
     const a = angleDeg * DEG_TO_RAD;
     const spd = Math.min(Math.max(speed, 0), 60);
-    const vx = Math.cos(a) * spd;
-    const vy = Math.sin(a) * spd;
+    const vx = Math.cos(a) * spd + inheritedVelocity.x;
+    const vy = Math.sin(a) * spd + inheritedVelocity.y;
     const bullet: Bullet = {
       alive: true,
       x: x + vx * DT * advanceTicks,

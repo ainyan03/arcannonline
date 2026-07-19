@@ -12,6 +12,14 @@ export type Vec2 = { x: number; y: number };
 // ---------------------------------------------------------------------------
 // 定数
 
+/**
+ * プロトコル互換バージョン。シミュレーションや通信の互換性が壊れる変更を
+ * 入れたら +1 する。プレゼンスと PEX で交換し、自分より新しい値を申告する
+ * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
+ * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
+ */
+export const PROTO_VERSION = 1;
+
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
 
@@ -51,6 +59,9 @@ export const MAX_BULLETS = 8192;
 
 /** 発射のクールダウン */
 export const FIRE_COOLDOWN_MS = 400;
+
+/** 発射時に弾へ引き継ぐ自機速度の割合 */
+export const BULLET_INHERIT_VELOCITY = 0.5;
 
 /** 受信した発射イベントを過去に遡って再生する上限 (tick)。
  * 遅延は時計ずれ補正済みの推定値を使うため、正常時は数 tick に収まる */
@@ -99,7 +110,8 @@ export interface SignalEnvelope {
 // Nostr イベントの content (JSON)
 
 export type NostrContent =
-  | { t: 'presence' }
+  /** v はプロトコル互換バージョン (PROTO_VERSION)。旧クライアントは省略する */
+  | { t: 'presence'; v?: number }
   | { t: 'bye' }
   | { t: 'signal'; env: SignalEnvelope };
 
@@ -211,6 +223,9 @@ export interface FireEvent {
   y: number;
   /** 発射時の向き (rad) */
   dir: number;
+  /** 発射時の自機速度。弾の初速へ一定割合を加算する */
+  vx?: number;
+  vy?: number;
   /** 発射時刻 (epoch ms) */
   at: number;
   /** 狙い撃ちのターゲット (ピアID)。DSL の aim / tdist が参照する */
@@ -229,7 +244,8 @@ export const MAX_SCRIPT_SRC_LEN = 4_000;
 
 /** 信頼チャネルのメッセージ */
 export type ReliableMessage =
-  | { type: 'pex'; peers: string[] }
+  /** v はプロトコル互換バージョン。接続直後の初回 PEX で相手へ伝わる */
+  | { type: 'pex'; peers: string[]; v?: number }
   | { type: 'sig'; env: SignalEnvelope }
   | { type: 'fire'; ev: FireEvent }
   /**

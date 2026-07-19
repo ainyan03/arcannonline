@@ -9,6 +9,7 @@ import {
   MAX_PEERS,
   PEX_INTERVAL_MS,
   PRESENCE_INTERVAL_MS,
+  PROTO_VERSION,
   STALE_PRESENCE_MS,
   type FireEvent,
   type NostrContent,
@@ -43,6 +44,8 @@ export class Mesh {
   onFire?: (id: string, ev: FireEvent) => void;
   onChat?: (id: string, text: string) => void;
   onBulletKill?: (fireId: string, spawnIdx: number) => void;
+  /** ピアが申告したプロトコルバージョン (プレゼンス/PEX 受信のたびに発火) */
+  onPeerVersion?: (id: string, version: number) => void;
 
   private readonly peers = new Map<string, PeerEntry>();
   private readonly presenceSeen = new Map<string, number>();
@@ -115,7 +118,7 @@ export class Mesh {
     const now = performance.now();
     if (!force && now - this.lastPresenceSentAt < PRESENCE_REPLY_MIN_MS) return;
     this.lastPresenceSentAt = now;
-    this.publish({ t: 'presence' });
+    this.publish({ t: 'presence', v: PROTO_VERSION });
   }
 
   /** 退室を通知し、全接続を閉じる */
@@ -143,6 +146,7 @@ export class Mesh {
     if (!content) return;
     switch (content.t) {
       case 'presence':
+        if (content.v !== undefined) this.onPeerVersion?.(from, content.v);
         this.notePeer(from);
         break;
       case 'bye':
@@ -248,6 +252,7 @@ export class Mesh {
   private handleReliable(fromId: string, msg: ReliableMessage): void {
     switch (msg.type) {
       case 'pex': {
+        if (msg.v !== undefined) this.onPeerVersion?.(fromId, msg.v);
         const entry = this.peers.get(fromId);
         if (entry) entry.known = new Set(msg.peers);
         // PEX による発見: リレーに頼らず新しいピアを知る
@@ -294,7 +299,7 @@ export class Mesh {
     for (const [id, e] of this.peers) {
       if (e.peer.isOpen) openIds.push(id);
     }
-    entry.peer.sendReliable({ type: 'pex', peers: openIds });
+    entry.peer.sendReliable({ type: 'pex', peers: openIds, v: PROTO_VERSION });
   }
 
   private cleanup(): void {

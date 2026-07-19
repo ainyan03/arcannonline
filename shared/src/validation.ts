@@ -5,6 +5,7 @@ import {
   MAX_SCRIPT_SRC_LEN,
   NPC_MAX_HP,
   NPCS_PER_PEER,
+  PLAYER_SPEED,
   type Appearance,
   type FireEvent,
   type NostrContent,
@@ -19,6 +20,8 @@ import {
 type JsonRecord = Record<string, unknown>;
 
 const PEER_ID_RE = /^[0-9a-f]{64}$/;
+/** 申告バージョンの受理上限 (異常値によるバナー誤発火を防ぐ緩い天井) */
+const MAX_PROTO_VERSION = 1_000_000;
 const NPC_ID_RE = /^[0-9a-f]{64}:npc:[0-3]$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MAX_SIGNAL_SDP_LEN = 64_000;
@@ -183,6 +186,14 @@ export function parseFireEvent(value: unknown): FireEvent | null {
   if (!shortString(v.script, 64) || v.script.length === 0 || !integer(v.seed, 0, 0xffff_ffff)) return null;
   if (!finite(v.x, -FIELD_SIZE, FIELD_SIZE) || !finite(v.y, -FIELD_SIZE, FIELD_SIZE)) return null;
   if (!finite(v.dir, -Math.PI * 2, Math.PI * 2) || !finite(v.at, 0, 10_000_000_000_000)) return null;
+  const hasVelocity = v.vx !== undefined || v.vy !== undefined;
+  if (
+    hasVelocity &&
+    (!finite(v.vx, -PLAYER_SPEED, PLAYER_SPEED) ||
+      !finite(v.vy, -PLAYER_SPEED, PLAYER_SPEED))
+  ) {
+    return null;
+  }
   if (v.target !== undefined && !isPeerId(v.target) && !isNpcId(v.target)) return null;
   if (v.src !== undefined && !shortString(v.src, MAX_SCRIPT_SRC_LEN)) return null;
   if (v.npc !== undefined && !isNpcId(v.npc)) return null;
@@ -197,6 +208,8 @@ export function parseFireEvent(value: unknown): FireEvent | null {
     x: v.x,
     y: v.y,
     dir: v.dir,
+    vx: v.vx as number | undefined,
+    vy: v.vy as number | undefined,
     at: v.at,
     target: v.target as string | undefined,
     tx: v.tx as number | undefined,
@@ -212,8 +225,11 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
   switch (v.type) {
     case 'pex': {
       if (!Array.isArray(v.peers) || v.peers.length > MAX_PEERS) return null;
+      if (v.v !== undefined && !integer(v.v, 1, MAX_PROTO_VERSION)) return null;
       const peers = [...new Set(v.peers)];
-      return peers.every(isPeerId) ? { type: 'pex', peers } : null;
+      return peers.every(isPeerId)
+        ? { type: 'pex', peers, v: v.v as number | undefined }
+        : null;
     }
     case 'sig': {
       const env = parseSignalEnvelope(v.env);
@@ -239,7 +255,10 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
 export function parseNostrContent(value: unknown): NostrContent | null {
   const v = record(value);
   if (!v) return null;
-  if (v.t === 'presence') return { t: 'presence' };
+  if (v.t === 'presence') {
+    if (v.v !== undefined && !integer(v.v, 1, MAX_PROTO_VERSION)) return null;
+    return { t: 'presence', v: v.v as number | undefined };
+  }
   if (v.t === 'bye') return { t: 'bye' };
   if (v.t === 'signal') {
     const env = parseSignalEnvelope(v.env);
