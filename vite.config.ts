@@ -14,4 +14,18 @@ export default defineConfig({
     host: true,
     port: useHttps ? 5174 : 5173,
   },
+  build: {
+    // Three.js単体の実測は約507KB（gzip約127KB）。依存ライブラリを無理に
+    // 細分化せず、ゲーム本体の肥大化は引き続き検知できる範囲にする。
+    chunkSizeWarningLimit: 550,
+    rollupOptions: {
+      output: {
+        // 描画ライブラリは更新頻度の高いゲーム本体から分離する。
+        // 単一チャンクの肥大化を防ぎ、再デプロイ時のブラウザキャッシュも活かす。
+        manualChunks: {
+          three: ['three'],
+        },
+      },
+    },
+  },
 });
