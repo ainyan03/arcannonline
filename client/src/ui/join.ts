@@ -65,7 +65,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
 
     const tagline = document.createElement('div');
     tagline.className = 'tagline';
-    tagline.textContent = '魔法弾幕オンライン対戦（試作）';
+    tagline.textContent = '魔法弾幕オンライン共闘（試作）';
 
     const input = document.createElement('input');
     input.type = 'text';

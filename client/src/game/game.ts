@@ -187,8 +187,9 @@ export class Game {
       const sim = this.remotes.get(owner)?.sim;
       return { color: sim?.ap?.c ?? null, name: sim?.name ?? owner };
     });
-    // 共通敵同士の弾は相殺させず、プレイヤーの弾とだけ干渉させる。
-    this.engine.areAllied = (a, b) => isNpcId(a) && isNpcId(b);
+    // 協力プレイ: 同陣営 (プレイヤー同士・敵同士) の弾は干渉しない。
+    // プレイヤー弾と敵弾だけが相殺し合う (撃ち落とし = 防御アクション)
+    this.engine.areAllied = (a, b) => isNpcId(a) === isNpcId(b);
     this.particles = new Particles(this.world.scene);
     // 弾同士の相殺・被弾消費で弾けて消えるエフェクト (寿命切れ等では出さない)
     this.engine.onKill = (b, cause) => {
@@ -721,7 +722,9 @@ export class Game {
     let killerId = '';
     for (let i = 0; i < bs.length; i++) {
       const b = bs[i];
-      if (!b.alive || b.owner === this.room.selfId) continue;
+      // 協力プレイ: ダメージを受けるのは敵 (NPC) の弾のみ。
+      // プレイヤー同士はフレンドリーファイアなし (弾はすり抜ける)
+      if (!b.alive || !isNpcId(b.owner)) continue;
       const dx = b.x - px;
       const dy = b.y - py;
       const rr = b.radius + pr;
@@ -1066,19 +1069,7 @@ export class Game {
     const h = container.clientHeight;
     let best: string | null = null;
     let bestDist = 40; // px
-    for (const [id, remote] of this.remotes) {
-      if (!remote.view.object.visible) continue;
-      const p = remote.view.object.position;
-      this.projTmp.set(p.x, 1.0, p.z).project(this.camera.camera);
-      if (this.projTmp.z > 1) continue; // カメラ背後
-      const sx = ((this.projTmp.x + 1) / 2) * w;
-      const sy = ((1 - this.projTmp.y) / 2) * h;
-      const d = Math.hypot(sx - clientX, sy - clientY);
-      if (d < bestDist) {
-        bestDist = d;
-        best = id;
-      }
-    }
+    // 協力プレイ: ロックオン対象は敵 (NPC) のみ
     for (const npc of [...this.localNpcs, ...this.remoteNpcs.values()]) {
       if (!npc.view.object.visible) continue;
       const p = npc.view.object.position;
