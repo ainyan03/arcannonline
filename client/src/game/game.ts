@@ -157,10 +157,11 @@ export class Game {
     container.appendChild(this.hud);
 
     // 入り直しボタン: 自動再参加を解除して参加画面 (名前・見た目の変更) に戻る
-    const leaveBtn = document.createElement('div');
+    const leaveBtn = document.createElement('button');
+    leaveBtn.type = 'button';
     leaveBtn.className = 'leave-btn';
     leaveBtn.textContent = '入り直す';
-    leaveBtn.addEventListener('pointerdown', () => {
+    leaveBtn.addEventListener('click', () => {
       sessionStorage.removeItem('arcn-autojoin');
       this.room.leave();
       location.reload();
@@ -249,7 +250,8 @@ export class Game {
       this.engine.killByFire(fireId, spawnIdx);
     this.room.onChat = (id, text) => {
       const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
-      this.chat.addLine(name, text, text.startsWith('* '));
+      // リモートの通常発言を「* 」だけでシステム通知扱いにしない。
+      this.chat.addLine(name, text);
     };
     this.room.onPeerLeave = (id) => {
       const name = this.remotes.get(id)?.sim.name;
@@ -350,6 +352,7 @@ export class Game {
     this.playerView.setFlash(now < this.selfFlashUntil);
     this.playerView.setHp(this.player.hp / MAX_HP);
     this.playerView.setEnergy(this.player.energy / ENERGY_MAX);
+    this.playerView.animate(now);
 
     this.markerTargets.clear();
     for (const [id, remote] of this.remotes) {
@@ -364,6 +367,7 @@ export class Game {
         }
         remote.prevHp = remote.sim.hp;
         remote.view.setFlash(now < remote.flashUntil);
+        remote.view.animate(now);
         this.markerTargets.set(id, { name: remote.sim.name, x: s.x, z: s.y });
         if (id === this.targetId) {
           this.targetRing.position.set(s.x, 0.05, s.y);
@@ -470,7 +474,12 @@ export class Game {
     if (this.engine.ownerHasRun(this.room.selfId)) return;
 
     const seed = (Math.random() * 0x100000000) >>> 0;
-    const targetResolver = this.makeTargetResolver(this.targetId ?? undefined);
+    // 発射位置と照準位置はイベント生成時点で固定する。各受信者が持つ最新stateは
+    // 到着時刻が異なるため、実行中に参照すると同じseedでも弾道が分岐してしまう。
+    const origin = { x: this.player.pos.x, y: this.player.pos.y };
+    const targetPos = this.resolveTargetPosition(this.targetId ?? undefined);
+    const originResolver = () => origin;
+    const targetResolver = () => targetPos;
 
     // 発射ゲート: エネルギー。総コストを同シードの空実行で算出して一括消費
     // (同時存在弾数の上限はエンジン側で「最古の弾の寿命前倒し」として処理)
@@ -478,7 +487,7 @@ export class Game {
       source,
       seed,
       this.player.heading,
-      () => this.player.pos,
+      originResolver,
       targetResolver,
     );
     if (cost === null || !this.player.trySpendEnergy(cost)) return;
@@ -488,23 +497,24 @@ export class Game {
       id: crypto.randomUUID(),
       script: this.scriptId,
       seed,
-      x: this.player.pos.x,
-      y: this.player.pos.y,
+      x: origin.x,
+      y: origin.y,
       dir: this.player.heading,
       at: Date.now(),
       target: this.targetId ?? undefined,
+      tx: targetPos?.x,
+      ty: targetPos?.y,
       // カスタムスクリプトはソースを同梱して他クライアントでも再現できるようにする
       src: this.scriptId === 'custom' ? source : undefined,
     };
     this.seenFireIds.add(ev.id);
-    // 発射元は自機の現在位置に追従する (移動しながらの多段発射に対応)
     this.engine.startScript(
       source,
       ev.seed,
-      () => this.player.pos,
+      originResolver,
       ev.dir,
       this.room.selfId,
-      this.makeTargetResolver(ev.target),
+      targetResolver,
       0,
       ev.id,
     );
@@ -533,35 +543,36 @@ export class Game {
       Math.max(Math.floor(delayMs / TICK_MS), 0),
       MAX_FIRE_CATCHUP_TICKS,
     );
-    // 発射元は同期済みの相手最新位置に追従する。位置未受信・退室後は
-    // イベントに載っている発射時位置へフォールバック
-    const origin = () => {
-      const sim = this.remotes.get(fromId)?.sim;
-      return sim?.hasPos ? { x: sim.lastX, y: sim.lastY } : { x: ev.x, y: ev.y };
-    };
+    const origin = { x: ev.x, y: ev.y };
+    // 新プロトコルは照準位置もイベントへ固定保存する。旧クライアントからの
+    // イベントは受信時点の位置を一度だけ解決し、以後は同じ値を使う。
+    const targetPos =
+      ev.tx !== undefined && ev.ty !== undefined
+        ? { x: ev.tx, y: ev.ty }
+        : this.resolveTargetPosition(ev.target);
     this.engine.startScript(
       source,
       ev.seed,
-      origin,
+      () => origin,
       ev.dir,
       fromId,
-      this.makeTargetResolver(ev.target),
+      () => targetPos,
       catchup,
       ev.id,
     );
   }
 
   /**
-   * ターゲット位置の解決関数を作る。自分がターゲットなら自機の現在位置
-   * (回避が正確に反映される)、他プレイヤーなら同期済みの最新位置を返す。
+   * 現時点のターゲット位置をスナップショットする。発射イベント内で固定し、
+   * その後の通信遅延や回避によって端末ごとの弾道が分岐するのを防ぐ。
    */
-  private makeTargetResolver(targetId?: string): () => Vec2 | null {
-    if (!targetId) return () => null;
-    if (targetId === this.room.selfId) return () => this.player.pos;
-    return () => {
-      const sim = this.remotes.get(targetId)?.sim;
-      return sim?.hasPos ? { x: sim.lastX, y: sim.lastY } : null;
-    };
+  private resolveTargetPosition(targetId?: string): Vec2 | null {
+    if (!targetId) return null;
+    if (targetId === this.room.selfId) {
+      return { x: this.player.pos.x, y: this.player.pos.y };
+    }
+    const sim = this.remotes.get(targetId)?.sim;
+    return sim?.hasPos ? { x: sim.lastX, y: sim.lastY } : null;
   }
 
   // --- 入力 -----------------------------------------------------------------
@@ -569,7 +580,7 @@ export class Game {
   private setupInput(container: HTMLElement): void {
     window.addEventListener('keydown', (e) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
       if (e.code === 'Space') {
         e.preventDefault();
         this.fire();
@@ -774,12 +785,14 @@ export class Game {
         ? this.customSource
         : (DANMAKU_SCRIPTS[this.scriptId]?.source ?? null);
     if (!source) return null;
+    const origin = { x: this.player.pos.x, y: this.player.pos.y };
+    const target = this.resolveTargetPosition(this.targetId ?? undefined);
     return this.engine.estimateCost(
       source,
       1,
       this.player.heading,
-      () => this.player.pos,
-      this.makeTargetResolver(this.targetId ?? undefined),
+      () => origin,
+      () => target,
     );
   }
 

@@ -3,6 +3,10 @@ import type {
   SignalPayload,
   StatePayload,
 } from '../../../shared/src/protocol';
+import {
+  parseReliableMessage,
+  parseStatePayload,
+} from '../../../shared/src/validation';
 
 export interface PeerEvents {
   /** state チャネルが開通した */
@@ -61,14 +65,16 @@ export class Peer {
     this.stateCh.onclose = () => this.notifyClose();
     this.stateCh.onmessage = (ev) => {
       try {
-        events.onState(JSON.parse(String(ev.data)) as StatePayload);
+        const msg = parseStatePayload(JSON.parse(String(ev.data)));
+        if (msg) events.onState(msg);
       } catch {
         /* 壊れたパケットは無視 */
       }
     };
     this.reliableCh.onmessage = (ev) => {
       try {
-        events.onReliable(JSON.parse(String(ev.data)) as ReliableMessage);
+        const msg = parseReliableMessage(JSON.parse(String(ev.data)));
+        if (msg) events.onReliable(msg);
       } catch {
         /* 同上 */
       }

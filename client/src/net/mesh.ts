@@ -17,6 +17,7 @@ import {
   type StatePayload,
 } from '../../../shared/src/protocol';
 import type { NostrSignaling } from './nostr';
+import { parseNostrContent } from '../../../shared/src/validation';
 import { Peer } from './peer';
 
 const ENV_SEEN_MAX = 2_000;
@@ -124,12 +125,13 @@ export class Mesh {
   }
 
   private handleNostr(from: string, contentStr: string): void {
-    let content: NostrContent;
+    let content: NostrContent | null;
     try {
-      content = JSON.parse(contentStr) as NostrContent;
+      content = parseNostrContent(JSON.parse(contentStr));
     } catch {
       return;
     }
+    if (!content) return;
     switch (content.t) {
       case 'presence':
         this.notePeer(from);

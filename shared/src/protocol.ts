@@ -111,11 +111,11 @@ export type NostrContent =
  * (任意3Dモデル (GLB) のハッシュ同期+チャンク転送は今後の拡張)
  */
 export type Appearance = {
-  /** 体型: 0=カプセル 1=ボックス 2=コーン 3=スフィア */
+  /** 衣装: 0=星の魔法少女 1=箒の魔女 2=月の魔導士 3=花の魔女 */
   s: number;
   /** 体色 (#rrggbb) */
   c: string;
-  /** アクセサリ: 0=なし 1=帽子 2=アンテナ */
+  /** 頭飾り: 0=なし 1=魔女帽子 2=大きなリボン */
   a: number;
 };
 
@@ -185,6 +185,9 @@ export interface FireEvent {
   at: number;
   /** 狙い撃ちのターゲット (ピアID)。DSL の aim / tdist が参照する */
   target?: string;
+  /** 発射時点で固定したターゲット位置。端末ごとの state 受信差による弾道分岐を防ぐ */
+  tx?: number;
+  ty?: number;
   /** カスタムスクリプトのソース (script が同梱スクリプトにない場合に使用) */
   src?: string;
 }

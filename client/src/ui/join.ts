@@ -9,8 +9,8 @@ export interface JoinResult {
   appearance: Appearance;
 }
 
-const SHAPES = ['カプセル', 'ボックス', 'コーン', 'スフィア'];
-const ACCS = ['なし', '帽子', 'アンテナ'];
+const SHAPES = ['星の魔法少女', '箒の魔女', '月の魔導士', '花の魔女'];
+const ACCS = ['飾りなし', '魔女帽子', '大きなリボン'];
 
 function loadAppearance(): Appearance {
   try {

@@ -13,7 +13,7 @@ const RECONNECT_BASE_MS = 3_000;
 const RECONNECT_MAX_MS = 60_000;
 const SEEN_MAX = 2_000;
 
-interface NostrEvent {
+export interface NostrEvent {
   id: string;
   pubkey: string;
   created_at: number;
@@ -21,6 +21,57 @@ interface NostrEvent {
   tags: string[][];
   content: string;
   sig: string;
+}
+
+const HEX_32_RE = /^[0-9a-f]{64}$/;
+const HEX_64_RE = /^[0-9a-f]{128}$/;
+const MAX_EVENT_CONTENT_LEN = 100_000;
+
+/** NIP-01 の正規化表現からイベントIDを計算する。 */
+export function computeNostrEventId(ev: Pick<NostrEvent, 'pubkey' | 'created_at' | 'kind' | 'tags' | 'content'>): string {
+  return bytesToHex(
+    sha256(
+      utf8ToBytes(
+        JSON.stringify([0, ev.pubkey, ev.created_at, ev.kind, ev.tags, ev.content]),
+      ),
+    ),
+  );
+}
+
+/** 公開リレーから届いたイベントの構造・topic・本文ハッシュ・署名を検証する。 */
+export function verifyNostrEvent(
+  value: unknown,
+  topic: string,
+  nowSec = Date.now() / 1000,
+): value is NostrEvent {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const ev = value as NostrEvent;
+  if (
+    ev.kind !== NOSTR_KIND ||
+    typeof ev.id !== 'string' ||
+    typeof ev.pubkey !== 'string' ||
+    typeof ev.sig !== 'string' ||
+    typeof ev.content !== 'string' ||
+    ev.content.length > MAX_EVENT_CONTENT_LEN ||
+    !Number.isSafeInteger(ev.created_at) ||
+    !Array.isArray(ev.tags) ||
+    !ev.tags.every((tag) =>
+      Array.isArray(tag) && tag.every((item) => typeof item === 'string')
+    ) ||
+    !ev.tags.some((tag) => tag[0] === 't' && tag[1] === topic) ||
+    !HEX_32_RE.test(ev.id) ||
+    !HEX_32_RE.test(ev.pubkey) ||
+    !HEX_64_RE.test(ev.sig) ||
+    Math.abs(nowSec - ev.created_at) > 60 ||
+    computeNostrEventId(ev) !== ev.id
+  ) {
+    return false;
+  }
+  try {
+    return schnorr.verify(hexToBytes(ev.sig), hexToBytes(ev.id), hexToBytes(ev.pubkey));
+  } catch {
+    return false;
+  }
 }
 
 export class NostrSignaling {
@@ -62,15 +113,13 @@ export class NostrSignaling {
   publish(content: string): void {
     const created_at = Math.floor(Date.now() / 1000);
     const tags = [['t', this.topic]];
-    const serialized = JSON.stringify([
-      0,
-      this.pubkey,
+    const id = computeNostrEventId({
+      pubkey: this.pubkey,
       created_at,
-      NOSTR_KIND,
+      kind: NOSTR_KIND,
       tags,
       content,
-    ]);
-    const id = bytesToHex(sha256(utf8ToBytes(serialized)));
+    });
     const sig = bytesToHex(schnorr.sign(hexToBytes(id), this.privkey));
     const event: NostrEvent = {
       id,
@@ -159,33 +208,10 @@ export class NostrSignaling {
   }
 
   private handleEvent(ev: NostrEvent): void {
-    if (
-      !ev ||
-      ev.kind !== NOSTR_KIND ||
-      typeof ev.id !== 'string' ||
-      typeof ev.pubkey !== 'string' ||
-      typeof ev.content !== 'string'
-    ) {
-      return;
-    }
+    if (!verifyNostrEvent(ev, this.topic)) return;
     if (ev.pubkey === this.pubkey) return; // 自分の発行分
-    // リプレイされた古いイベントは捨てる (時計ずれの許容幅 60 秒)
-    if (Math.abs(Date.now() / 1000 - ev.created_at) > 60) return;
     if (this.seen.has(ev.id)) return; // 複数リレーからの重複
     this.remember(ev.id);
-    try {
-      if (
-        !schnorr.verify(
-          hexToBytes(ev.sig),
-          hexToBytes(ev.id),
-          hexToBytes(ev.pubkey),
-        )
-      ) {
-        return;
-      }
-    } catch {
-      return;
-    }
     this.onMessage?.(ev.pubkey, ev.content);
   }
 

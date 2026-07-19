@@ -5,6 +5,12 @@ import { ParseError, type Expr, type Program, type Stmt } from './parser';
 
 /** 1 tick あたりの実行ステップ上限 (暴走スクリプト対策) */
 const MAX_OPS_PER_TICK = 20_000;
+/** 1スクリプト全体の命令数上限。waitでtickを跨いだCPU/生成量の濫用も止める */
+const MAX_TOTAL_OPS = 200_000;
+/** 1スクリプトが生成できる弾の総数 */
+const MAX_FIRES_PER_RUN = 2_000;
+/** 1スクリプトの最長実行時間 (60秒) */
+export const MAX_SCRIPT_TICKS = 60 * 60;
 /** loop の回数上限 */
 const MAX_LOOP_COUNT = 100_000;
 
@@ -53,6 +59,8 @@ class Scope {
 interface RunState {
   ctx: ScriptContext;
   ops: number;
+  totalOps: number;
+  fires: number;
 }
 
 function truthy(v: number): boolean {
@@ -61,10 +69,15 @@ function truthy(v: number): boolean {
 
 const DEG = Math.PI / 180;
 
+function consumeOp(st: RunState): void {
+  st.ops++;
+  st.totalOps++;
+  if (st.ops > MAX_OPS_PER_TICK) throw new Error('script exceeded per-tick op budget');
+  if (st.totalOps > MAX_TOTAL_OPS) throw new Error('script exceeded total op budget');
+}
+
 function evalExpr(e: Expr, scope: Scope, st: RunState): number {
-  if (++st.ops > MAX_OPS_PER_TICK) {
-    throw new Error('script exceeded op budget');
-  }
+  consumeOp(st);
   switch (e.k) {
     case 'num':
       return e.v;
@@ -124,6 +137,8 @@ function callFn(name: string, args: number[], st: RunState): number {
     case 'min': return Math.min(...args);
     case 'max': return Math.max(...args);
     case 'fire': {
+      st.fires++;
+      if (st.fires > MAX_FIRES_PER_RUN) throw new Error('script exceeded fire budget');
       st.ctx.fire(
         args[0] ?? 0,
         args[1] ?? 10,
@@ -144,9 +159,7 @@ function* execBlock(
   st: RunState,
 ): Generator<number, void, void> {
   for (const s of stmts) {
-    if (++st.ops > MAX_OPS_PER_TICK) {
-      throw new Error('script exceeded op budget');
-    }
+    consumeOp(st);
     switch (s.k) {
       case 'let':
         scope.define(s.name, evalExpr(s.e, scope, st));
@@ -185,18 +198,29 @@ function* execBlock(
 /** 実行中のスクリプト1本。tick() を 1/60 秒毎に呼ぶ。 */
 export class ScriptRun {
   done = false;
+  failed = false;
 
   private readonly gen: Generator<number, void, void>;
   private readonly st: RunState;
   private waitLeft = 0;
+  private tickCount = 0;
 
-  constructor(program: Program, ctx: ScriptContext) {
-    this.st = { ctx, ops: 0 };
+  constructor(
+    program: Program,
+    ctx: ScriptContext,
+    private readonly silent = false,
+  ) {
+    this.st = { ctx, ops: 0, totalOps: 0, fires: 0 };
     this.gen = execBlock(program, new Scope(null), this.st);
   }
 
   tick(): void {
     if (this.done) return;
+    if (this.tickCount >= MAX_SCRIPT_TICKS) {
+      this.abort(new Error('script exceeded duration budget'));
+      return;
+    }
+    this.tickCount++;
     this.st.ctx.t++;
     if (this.waitLeft > 0) {
       this.waitLeft--;
@@ -212,9 +236,14 @@ export class ScriptRun {
         this.waitLeft = r.value - 1;
       }
     } catch (err) {
-      console.warn('[danmaku] script aborted:', err);
-      this.done = true;
+      this.abort(err);
     }
+  }
+
+  private abort(err: unknown): void {
+    if (!this.silent) console.warn('[danmaku] script aborted:', err);
+    this.failed = true;
+    this.done = true;
   }
 }
 

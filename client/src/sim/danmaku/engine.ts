@@ -14,7 +14,7 @@ import {
 } from '../../../../shared/src/protocol';
 import { parse, type Program } from './parser';
 import { mulberry32 } from './rng';
-import { ScriptRun, type ScriptContext } from './vm';
+import { MAX_SCRIPT_TICKS, ScriptRun, type ScriptContext } from './vm';
 
 const DT = 1 / TICK_RATE;
 
@@ -38,6 +38,7 @@ const BULLET_TTL_TICKS = TICK_RATE * 60;
 const CELL = 2;
 const RAD_TO_DEG = 180 / Math.PI;
 const DEG_TO_RAD = Math.PI / 180;
+const COMPILED_CACHE_MAX = 128;
 
 export interface Bullet {
   alive: boolean;
@@ -127,14 +128,11 @@ export class BulletEngine {
     origin: () => Vec2,
     targetPos: () => Vec2 | null = () => null,
   ): number | null {
-    let program = this.compiled.get(source);
-    if (!program) {
-      try {
-        program = parse(source);
-      } catch {
-        return null;
-      }
-      this.compiled.set(source, program);
+    let program: Program;
+    try {
+      program = this.compile(source);
+    } catch {
+      return null;
     }
     let cost = 0;
     const dirDeg = dirRad * RAD_TO_DEG;
@@ -158,10 +156,10 @@ export class BulletEngine {
         return Math.hypot(tp.x - p.x, tp.y - p.y);
       },
     };
-    const run = new ScriptRun(program, ctx);
-    // wait を含めて最大60秒ぶんを一気に空回しする
-    for (let i = 0; i < TICK_RATE * 60 && !run.done; i++) run.tick();
-    return cost;
+    const run = new ScriptRun(program, ctx, true);
+    // wait を含めて実行上限まで空回しし、完了しない/異常終了するスクリプトは拒否する
+    for (let i = 0; i < MAX_SCRIPT_TICKS && !run.done; i++) run.tick();
+    return run.done && !run.failed ? cost : null;
   }
 
   get runCount(): number {
@@ -186,15 +184,12 @@ export class BulletEngine {
     catchupTicks = 0,
     fireId = '',
   ): void {
-    let program = this.compiled.get(source);
-    if (!program) {
-      try {
-        program = parse(source);
-      } catch (err) {
-        console.warn('[danmaku] parse error:', err);
-        return;
-      }
-      this.compiled.set(source, program);
+    let program: Program;
+    try {
+      program = this.compile(source);
+    } catch (err) {
+      console.warn('[danmaku] parse error:', err);
+      return;
     }
 
     let pendingAdvance = 0; // 追いつき再生中に生成された弾を進める tick 数
@@ -438,5 +433,23 @@ export class BulletEngine {
 
   private cellKey(x: number, y: number): number {
     return (Math.floor(x / CELL) + 32768) * 65536 + (Math.floor(y / CELL) + 32768);
+  }
+
+  /** カスタムソースを含む構文木キャッシュ。長時間接続でも上限を超えて増やさない。 */
+  private compile(source: string): Program {
+    const cached = this.compiled.get(source);
+    if (cached) {
+      // Map の挿入順をLRUとして使う
+      this.compiled.delete(source);
+      this.compiled.set(source, cached);
+      return cached;
+    }
+    const program = parse(source);
+    this.compiled.set(source, program);
+    if (this.compiled.size > COMPILED_CACHE_MAX) {
+      const oldest = this.compiled.keys().next().value;
+      if (oldest !== undefined) this.compiled.delete(oldest);
+    }
+    return program;
   }
 }
