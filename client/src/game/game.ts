@@ -19,6 +19,7 @@ import {
   MAX_SCRIPT_SRC_LEN,
   NPC_STATE_INTERVAL_MS,
   NPCS_PER_PEER,
+  PROTO_VERSION,
   STATE_INTERVAL_MS,
   TICK_MS,
   type Appearance,
@@ -36,6 +37,7 @@ import { ChatUI } from '../ui/chat';
 import { FireButtonUI } from '../ui/fire-button';
 import { ScriptEditorUI } from '../ui/script-editor';
 import { StickUI } from '../ui/stick';
+import { UpdateBannerUI } from '../ui/update-banner';
 import { LocalPlayerSim } from '../sim/local-player';
 import { RemotePlayerSim } from '../sim/remote-player';
 import {
@@ -366,6 +368,11 @@ export class Game {
       this.removeRemote(id);
       this.removeRemoteNpcsOwnedBy(id);
       this.updateHud();
+    };
+    // 自分より新しいバージョンを申告するピアが居たらアップデートを促す
+    const updateBanner = new UpdateBannerUI(container);
+    this.room.onPeerVersion = (_id, version) => {
+      if (version > PROTO_VERSION) updateBanner.show();
     };
 
     this.setupInput(container);

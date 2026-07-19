@@ -20,6 +20,8 @@ import {
 type JsonRecord = Record<string, unknown>;
 
 const PEER_ID_RE = /^[0-9a-f]{64}$/;
+/** 申告バージョンの受理上限 (異常値によるバナー誤発火を防ぐ緩い天井) */
+const MAX_PROTO_VERSION = 1_000_000;
 const NPC_ID_RE = /^[0-9a-f]{64}:npc:[0-3]$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MAX_SIGNAL_SDP_LEN = 64_000;
@@ -223,8 +225,11 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
   switch (v.type) {
     case 'pex': {
       if (!Array.isArray(v.peers) || v.peers.length > MAX_PEERS) return null;
+      if (v.v !== undefined && !integer(v.v, 1, MAX_PROTO_VERSION)) return null;
       const peers = [...new Set(v.peers)];
-      return peers.every(isPeerId) ? { type: 'pex', peers } : null;
+      return peers.every(isPeerId)
+        ? { type: 'pex', peers, v: v.v as number | undefined }
+        : null;
     }
     case 'sig': {
       const env = parseSignalEnvelope(v.env);
@@ -250,7 +255,10 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
 export function parseNostrContent(value: unknown): NostrContent | null {
   const v = record(value);
   if (!v) return null;
-  if (v.t === 'presence') return { t: 'presence' };
+  if (v.t === 'presence') {
+    if (v.v !== undefined && !integer(v.v, 1, MAX_PROTO_VERSION)) return null;
+    return { t: 'presence', v: v.v as number | undefined };
+  }
   if (v.t === 'bye') return { t: 'bye' };
   if (v.t === 'signal') {
     const env = parseSignalEnvelope(v.env);

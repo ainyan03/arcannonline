@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseAppearance,
   parseFireEvent,
+  parseNostrContent,
   parseRealtimeMessage,
   parseReliableMessage,
   parseStatePayload,
@@ -30,6 +31,18 @@ describe('protocol validation', () => {
       .toEqual({ type: 'pex', peers: [peerId] });
     expect(parseReliableMessage({ type: 'pex', peers: ['not-a-key'] })).toBeNull();
     expect(parseReliableMessage({ type: 'pex', peers: Array(33).fill(peerId) })).toBeNull();
+  });
+
+  it('carries an optional protocol version in presence and PEX', () => {
+    expect(parseNostrContent({ t: 'presence' })).toEqual({ t: 'presence' });
+    expect(parseNostrContent({ t: 'presence', v: 2 }))
+      .toMatchObject({ t: 'presence', v: 2 });
+    expect(parseNostrContent({ t: 'presence', v: 0 })).toBeNull();
+    expect(parseNostrContent({ t: 'presence', v: 1.5 })).toBeNull();
+    expect(parseReliableMessage({ type: 'pex', peers: [peerId], v: 3 }))
+      .toMatchObject({ type: 'pex', v: 3 });
+    expect(parseReliableMessage({ type: 'pex', peers: [peerId], v: -1 }))
+      .toBeNull();
   });
 
   it('requires a complete target position snapshot', () => {
