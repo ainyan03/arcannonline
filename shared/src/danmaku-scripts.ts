@@ -86,3 +86,20 @@ fire(aim + 10, 16, 12, 0.2, 1.6);
 };
 
 export const DEFAULT_SCRIPT_ID = 'ring';
+
+/**
+ * 見た目プリセット (appearance.s) ごとの固定ボム (強攻撃)。
+ * 選択UIは廃止し、STG のボムの位置付けでクラスの個性とする:
+ * 星=全方位リング / 箒=前方ショット (一撃離脱) / 月=狙い3way (自動照準の狙撃) /
+ * 花=双腕スパイラル (面制圧)
+ */
+export const CLASS_BOMB_SCRIPT_IDS = [
+  'ring',
+  'spray',
+  'aimshot',
+  'spiral',
+] as const;
+
+export function bombScriptIdFor(styleIndex: number | undefined): string {
+  return CLASS_BOMB_SCRIPT_IDS[styleIndex ?? 0] ?? DEFAULT_SCRIPT_ID;
+}

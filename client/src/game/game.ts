@@ -4,9 +4,9 @@
 import * as THREE from 'three';
 import {
   DANMAKU_SCRIPTS,
-  DEFAULT_SCRIPT_ID,
   NORMAL_SHOT_SCRIPT_ID,
   NORMAL_SHOT_SCRIPT_SOURCE,
+  bombScriptIdFor,
 } from '../../../shared/src/danmaku-scripts';
 import {
   BOSS_SCRIPT_IDS,
@@ -117,10 +117,6 @@ const STALE_REMOTE_MS = 10_000;
  */
 const AFK_TIMEOUT_MS = 300_000;
 
-/** タップ判定: この時間・移動量以内の単押しをタップとみなす (ドラッグと区別) */
-const TAP_MS = 400;
-const TAP_PX = 6;
-
 /**
  * タッチの移動入力を確定するまでの猶予。2本指操作は着地タイミングが
  * わずかにずれるため、1本目に即反応すると意図しない移動が発生する
@@ -210,15 +206,13 @@ export class Game {
   private lastTickTime = performance.now();
   private lastNpcUpdate = performance.now();
   private lastNpcSentAt = 0;
-  private scriptId = DEFAULT_SCRIPT_ID;
+  /** クラス (見た目プリセット) で固定されるボムのスクリプトID */
+  private readonly bombScriptId: string;
   private lastFireAt = 0;
   private lastAutoFireAt = 0;
   private viewportW = 0;
   private viewportH = 0;
   private fireHeld = false;
-  private downAt = 0;
-  private downX = 0;
-  private downY = 0;
   private readonly activePointers = new Set<number>();
   private gestureMulti = false;
   /** 移動追従中のポインタ (押している位置へ移動し続ける) */
@@ -231,9 +225,6 @@ export class Game {
     timer: number;
   } | null = null;
   private stickVec: Vec2 | null = null;
-  private targetId: string | null = null;
-  private readonly targetRing: THREE.Mesh;
-  private readonly projTmp = new THREE.Vector3();
   private readonly chat: ChatUI;
   private readonly fireBtn: FireButtonUI;
   private accountUnsubscribe: () => void = () => {};
@@ -290,6 +281,8 @@ export class Game {
     const spawn = pickSpawnPoint();
     this.player = new LocalPlayerSim(spawn, name, appearance);
     this.playerView = new PlayerView(name, appearance);
+    // 強攻撃はクラス (見た目プリセット) 固定のボム。選択UIは持たない
+    this.bombScriptId = bombScriptIdFor(appearance?.s);
     this.playerView.sync(spawn.x, spawn.y, 0);
     this.world.scene.add(this.playerView.object);
     // 初回フレーム前でもレイキャスト等が正しく動くようカメラを初期化する
@@ -348,23 +341,12 @@ export class Game {
       this.fireHeld = held;
       if (held) this.fire();
     };
-    this.fireBtn.onCycleScript = () => this.cycleScript();
 
     // 仮想スティック (左下): 発射ボタンと同時に使える移動手段
     const stick = new StickUI(container);
     stick.onMove = (v) => {
       this.stickVec = v && Math.hypot(v.x, v.y) > 0.25 ? v : null;
     };
-
-    // ターゲット指定中の相手の足元に表示するリング
-    this.targetRing = new THREE.Mesh(
-      new THREE.RingGeometry(0.9, 1.25, 32),
-      new THREE.MeshBasicMaterial({ color: 0xff5544, side: THREE.DoubleSide }),
-    );
-    this.targetRing.rotation.x = -Math.PI / 2;
-    this.targetRing.position.y = 0.05;
-    this.targetRing.visible = false;
-    this.world.scene.add(this.targetRing);
 
     this.room = new GameRoom(privkey);
     this.bulletSync = new BulletSync(this.engine, this.room);
@@ -467,9 +449,6 @@ export class Game {
           ) {
             this.audio.playDefeat();
           }
-        }
-        if (state.mode === 'dead' && this.targetId === state.id) {
-          this.targetId = null;
         }
       }
       // ボスは動的スロットなので、担当ピアの最新バッチから消えたら退場済み。
@@ -753,7 +732,6 @@ export class Game {
     this.playerView.animate(now);
 
     this.markerTargets.clear();
-    let targetVisible = false;
     for (const [id, remote] of this.remotes) {
       const s = remote.sim.sample(now);
       if (s.visible) {
@@ -774,10 +752,6 @@ export class Game {
           kind: 'player',
           dist: Math.hypot(s.x - this.player.pos.x, s.y - this.player.pos.y),
         });
-        if (id === this.targetId) {
-          this.targetRing.position.set(s.x, 0.05, s.y);
-          targetVisible = true;
-        }
       }
     }
 
@@ -798,10 +772,6 @@ export class Game {
           ),
         });
       }
-      if (npc.sim.alive && npc.sim.id === this.targetId) {
-        this.targetRing.position.set(npc.sim.pos.x, 0.05, npc.sim.pos.y);
-        targetVisible = true;
-      }
     }
     for (const npc of this.remoteNpcs.values()) {
       const s = npc.sim.sample(now);
@@ -818,12 +788,7 @@ export class Game {
           dist: Math.hypot(s.x - this.player.pos.x, s.y - this.player.pos.y),
         });
       }
-      if (s.visible && npc.sim.id === this.targetId) {
-        this.targetRing.position.set(s.x, 0.05, s.y);
-        targetVisible = true;
-      }
     }
-    this.targetRing.visible = targetVisible;
 
     this.bulletView.sync(this.engine.bullets, this.room.selfId);
     this.particles.update(dt);
@@ -917,7 +882,6 @@ export class Game {
       const [entry] = this.localNpcs.splice(bossIdx, 1);
       this.world.scene.remove(entry.view.object);
       entry.view.dispose();
-      if (this.targetId === entry.sim.id) this.targetId = null;
       return;
     }
     if (
@@ -1173,7 +1137,6 @@ export class Game {
               npc.sim.kind === 'boss' ? 3 : 1.2,
             );
             this.audio.playDefeat();
-            if (this.targetId === npc.sim.id) this.targetId = null;
             if (npc.sim.kind === 'boss') this.onBossDefeated();
           }
         },
@@ -1256,7 +1219,7 @@ export class Game {
   private fire(): void {
     const now = performance.now();
     if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
-    const source = DANMAKU_SCRIPTS[this.scriptId]?.source ?? null;
+    const source = DANMAKU_SCRIPTS[this.bombScriptId]?.source ?? null;
     if (!source) return;
 
     // 発射ゲート: 前の発射指示 (自分のスクリプト) が完了するまで重ねられない。
@@ -1268,7 +1231,9 @@ export class Game {
     // 到着時刻が異なるため、実行中に参照すると同じseedでも弾道が分岐してしまう。
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
     const sourceVelocity = this.player.getVelocity();
-    const targetPos = this.resolveTargetPosition(this.targetId ?? undefined);
+    // aim を使うボムは自動照準 (ボス優先 → 最寄りの敵)。手動ターゲットは廃止
+    const aimTarget = this.autoAimTarget();
+    const targetPos = aimTarget?.pos ?? null;
     const originResolver = () => origin;
     const targetResolver = () => targetPos;
 
@@ -1286,7 +1251,7 @@ export class Game {
     this.lastFireAt = now;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
-      script: this.scriptId,
+      script: this.bombScriptId,
       seed,
       x: origin.x,
       y: origin.y,
@@ -1294,7 +1259,7 @@ export class Game {
       vx: sourceVelocity.x,
       vy: sourceVelocity.y,
       at: Date.now(),
-      target: this.targetId ?? undefined,
+      target: aimTarget?.id,
       tx: targetPos?.x,
       ty: targetPos?.y,
     };
@@ -1483,15 +1448,6 @@ export class Game {
         this.chat.open();
         return;
       }
-      const scriptIds = Object.keys(DANMAKU_SCRIPTS);
-      const digit = e.code.match(/^Digit([1-9])$/);
-      if (digit) {
-        const idx = Number(digit[1]) - 1;
-        if (idx < scriptIds.length) {
-          this.scriptId = scriptIds[idx];
-          this.updateHud();
-        }
-      }
     });
 
     const dom = this.world.renderer.domElement;
@@ -1511,11 +1467,6 @@ export class Game {
         this.cancelPendingFollow();
         return;
       }
-      this.downAt = performance.now();
-      this.downX = e.clientX;
-      this.downY = e.clientY;
-      // プレイヤーの上ならタップ判定 (pointerup) に委ねる
-      if (this.pickTargetAt(e.clientX, e.clientY, container)) return;
       if (e.pointerType === 'touch') {
         // タッチは猶予期間を置いてから移動を確定する (2本指操作の誤発動防止)
         this.cancelPendingFollow();
@@ -1559,17 +1510,6 @@ export class Game {
       const wasMulti = this.gestureMulti;
       if (this.activePointers.size === 0) this.gestureMulti = false;
       if (wasMulti) return; // ピンチ/回転操作の指離しはタップ扱いしない
-      // プレイヤーへの短いタップ = ターゲット指定/解除
-      const dt = performance.now() - this.downAt;
-      const moved = Math.hypot(e.clientX - this.downX, e.clientY - this.downY);
-      if (dt <= TAP_MS && moved <= TAP_PX) {
-        const hit = this.pickTargetAt(e.clientX, e.clientY, container);
-        if (hit) {
-          this.targetId = this.targetId === hit ? null : hit;
-          this.updateHud();
-          return;
-        }
-      }
       // 猶予中に離した = クイックタップ/フリック。移動として成立させる
       if (wasPending && e.type === 'pointerup') {
         const ground = this.raycastGround(e.clientX, e.clientY, container);
@@ -1585,41 +1525,6 @@ export class Game {
       clearTimeout(this.pendingFollow.timer);
       this.pendingFollow = null;
     }
-  }
-
-  /** 発射スクリプトを次へ切り替える (仮想ボタン横のチップ用) */
-  private cycleScript(): void {
-    const ids = Object.keys(DANMAKU_SCRIPTS);
-    const idx = ids.indexOf(this.scriptId);
-    this.scriptId = ids[(idx + 1) % ids.length];
-    this.updateHud();
-  }
-
-  /** 画面座標に一番近い他プレイヤー/NPCを拾う (しきい値以内)。 */
-  private pickTargetAt(
-    clientX: number,
-    clientY: number,
-    container: HTMLElement,
-  ): string | null {
-    const w = container.clientWidth;
-    const h = container.clientHeight;
-    let best: string | null = null;
-    let bestDist = 40; // px
-    // 協力プレイ: ロックオン対象は敵 (NPC) のみ
-    for (const npc of [...this.localNpcs, ...this.remoteNpcs.values()]) {
-      if (!npc.view.object.visible) continue;
-      const p = npc.view.object.position;
-      this.projTmp.set(p.x, 1.0, p.z).project(this.camera.camera);
-      if (this.projTmp.z > 1) continue;
-      const sx = ((this.projTmp.x + 1) / 2) * w;
-      const sy = ((1 - this.projTmp.y) / 2) * h;
-      const d = Math.hypot(sx - clientX, sy - clientY);
-      if (d < bestDist) {
-        bestDist = d;
-        best = npc.sim.id;
-      }
-    }
-    return best;
   }
 
   /** 画面座標から地面 (y=0 平面) 上のフィールド座標を求める */
@@ -1652,10 +1557,6 @@ export class Game {
     this.remotes.delete(id);
     this.world.scene.remove(remote.view.object);
     remote.view.dispose();
-    if (this.targetId === id) {
-      this.targetId = null;
-      this.updateHud();
-    }
   }
 
   private removeRemoteNpc(id: string): void {
@@ -1664,7 +1565,6 @@ export class Game {
     this.remoteNpcs.delete(id);
     this.world.scene.remove(npc.view.object);
     npc.view.dispose();
-    if (this.targetId === id) this.targetId = null;
   }
 
   private removeRemoteNpcsOwnedBy(ownerId: string): void {
@@ -1698,17 +1598,54 @@ export class Game {
   }
 
   /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
+  /**
+   * ボムの自動照準: ボス優先、次いで最寄りの生存敵。
+   * 見つからなければ null (aim 系スクリプトは自機の向きへ発射される)
+   */
+  private autoAimTarget(maxDist = 60): { id: string; pos: Vec2 } | null {
+    const px = this.player.pos.x;
+    const py = this.player.pos.y;
+    let best: { id: string; pos: Vec2 } | null = null;
+    let bestDist = maxDist;
+    let boss: { id: string; pos: Vec2 } | null = null;
+    let bossDist = maxDist * 1.5;
+    const consider = (id: string, pos: Vec2, kind: NpcKind) => {
+      const d = Math.hypot(pos.x - px, pos.y - py);
+      if (kind === 'boss') {
+        if (d < bossDist) {
+          bossDist = d;
+          boss = { id, pos };
+        }
+        return;
+      }
+      if (d < bestDist) {
+        bestDist = d;
+        best = { id, pos };
+      }
+    };
+    for (const npc of this.localNpcs) {
+      if (npc.sim.alive) {
+        consider(npc.sim.id, { x: npc.sim.pos.x, y: npc.sim.pos.y }, npc.sim.kind);
+      }
+    }
+    for (const [id, npc] of this.remoteNpcs) {
+      if (npc.sim.mode !== 'dead') {
+        consider(id, { x: npc.sim.lastX, y: npc.sim.lastY }, npc.sim.kind);
+      }
+    }
+    return boss ?? best;
+  }
+
   private estimateSelectedCost(): number | null {
-    const source = DANMAKU_SCRIPTS[this.scriptId]?.source ?? null;
+    const source = DANMAKU_SCRIPTS[this.bombScriptId]?.source ?? null;
     if (!source) return null;
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
-    const target = this.resolveTargetPosition(this.targetId ?? undefined);
     return this.engine.estimateCost(
       source,
       1,
       this.player.heading,
       () => origin,
-      () => target,
+      () => null,
     );
   }
 
@@ -1738,7 +1675,7 @@ export class Game {
   }
 
   private updateHud(): void {
-    const scriptName = DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId;
+    const scriptName = DANMAKU_SCRIPTS[this.bombScriptId]?.name ?? this.bombScriptId;
     this.fireBtn.setScriptName(scriptName);
     const estCost = this.estimateSelectedCost();
     this.fireBtn.setEnabled(
@@ -1746,15 +1683,6 @@ export class Game {
         this.player.energy >= estCost &&
         !this.engine.ownerHasRun(this.room.selfId),
     );
-    const targetName = this.targetId
-      ? (isNpcId(this.targetId)
-          ? NPC_KINDS[
-              this.localNpcs.find((npc) => npc.sim.id === this.targetId)?.sim.kind ??
-                this.remoteNpcs.get(this.targetId)?.sim.kind ??
-                'wisp'
-            ].name
-          : (this.remotes.get(this.targetId)?.sim.name ?? '?'))
-      : 'なし (クリックで指定)';
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
       `HP: ${this.player.hp}/${MAX_HP}  EN: ${Math.floor(this.player.energy)}/${ENERGY_MAX}` +
@@ -1769,8 +1697,7 @@ export class Game {
       `enemies: ${this.localNpcs.filter((npc) => npc.sim.alive).length}` +
       ` local / ${this.remoteNpcs.size} remote\n` +
       `bullets: ${this.engine.aliveCount} fps: ${this.fps}\n` +
-      `[Space]強攻撃 [1-4]切替: ${scriptName} (通常ショットは自動)\n` +
-      `[Enter]チャット\n` +
-      `target: ${targetName}`;
+      `[Space]ボム: ${scriptName} (通常ショットは自動)\n` +
+      `[Enter]チャット`;
   }
 }

@@ -1,12 +1,11 @@
 /**
- * 画面右下の仮想発射ボタンと魔法プリセット切替チップ。
+ * 画面右下の仮想発射ボタンと、クラス固定のボム名を示すラベルチップ。
  * ボタンは押している間 held 状態になり、ゲーム側がクールダウン毎に連射する。
  */
 export class FireButtonUI {
   onHoldChange?: (held: boolean) => void;
-  onCycleScript?: () => void;
 
-  private readonly chip: HTMLButtonElement;
+  private readonly chip: HTMLElement;
   private readonly btn: HTMLButtonElement;
 
   constructor(container: HTMLElement) {
@@ -15,13 +14,11 @@ export class FireButtonUI {
     btn.type = 'button';
     btn.className = 'fire-btn';
     btn.textContent = '◎';
-    btn.setAttribute('aria-label', '魔法を発射');
+    btn.setAttribute('aria-label', 'ボムを発射');
     container.appendChild(btn);
 
-    this.chip = document.createElement('button');
-    this.chip.type = 'button';
+    this.chip = document.createElement('div');
     this.chip.className = 'script-chip';
-    this.chip.setAttribute('aria-label', '魔法プリセットを切り替え');
     container.appendChild(this.chip);
 
     const setHeld = (held: boolean) => this.onHoldChange?.(held);
@@ -57,15 +54,10 @@ export class FireButtonUI {
         release();
       }
     });
-
-    this.chip.addEventListener('click', (e) => {
-      e.preventDefault();
-      this.onCycleScript?.();
-    });
   }
 
   setScriptName(name: string): void {
-    this.chip.textContent = `▶ ${name}`;
+    this.chip.textContent = `✦ ${name}`;
   }
 
   /** エネルギー不足などで発射できない時に見た目を無効化する */

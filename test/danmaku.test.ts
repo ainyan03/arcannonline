@@ -1,9 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CLASS_BOMB_SCRIPT_IDS,
   DANMAKU_SCRIPTS,
   NORMAL_SHOT_SCRIPT_SOURCE,
+  bombScriptIdFor,
 } from '../shared/src/danmaku-scripts';
 import { BulletEngine } from '../client/src/sim/danmaku/engine';
+
+describe('class bombs', () => {
+  it('maps every appearance preset to a bundled script', () => {
+    expect(CLASS_BOMB_SCRIPT_IDS).toHaveLength(4);
+    for (const id of CLASS_BOMB_SCRIPT_IDS) {
+      expect(DANMAKU_SCRIPTS[id]).toBeDefined();
+    }
+    expect(bombScriptIdFor(1)).toBe('spray');
+    // 範囲外・未指定は既定 (星の全方位リング) へ倒す
+    expect(bombScriptIdFor(undefined)).toBe('ring');
+    expect(bombScriptIdFor(9)).toBe('ring');
+  });
+});
 
 describe('BulletEngine', () => {
   it('accepts every bundled spell within the VM budgets', () => {
