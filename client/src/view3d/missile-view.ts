@@ -96,8 +96,9 @@ export class MissileView {
     now: number,
   ): void {
     launches.forEach(({ targetId, travelMs }, i) => {
+      // 横の散らしは発射直後の重なり防止程度に留め、主役は高さの放物線にする
       const side = i % 2 === 0 ? 1 : -1;
-      const spread = 6 + (i % 3) * 5;
+      const spread = 1.5 + (i % 3) * 1.2;
 
       const group = new THREE.Group();
       const core = new THREE.Mesh(
@@ -181,7 +182,11 @@ export class MissileView {
       const u = 1 - t;
       const x = u * u * m.fromX + 2 * u * t * cx + t * t * m.lastX;
       const y = u * u * m.fromY + 2 * u * t * cy + t * t * m.lastY;
-      const h = 1.4 + Math.sin(t * Math.PI) * 1.2;
+      // 高さは放物線: 距離に応じて高く上がり、山なりに飛び越えて標的へ落ちる。
+      // 敵弾と相殺しない・岩を飛び越えることの視覚的な理由付けでもある
+      const dist = Math.hypot(m.lastX - m.fromX, m.lastY - m.fromY);
+      const peak = Math.min(4 + dist * 0.3, 16);
+      const h = 1.2 + peak * 4 * t * u;
       m.group.position.set(x, h, y);
 
       // 軌跡: 先頭へ現在位置を押し込み、古い頂点を順送りにして尾を引く
