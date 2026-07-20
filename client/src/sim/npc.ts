@@ -136,7 +136,8 @@ export class LocalNpcSim {
   kind: NpcKind = 'wisp';
 
   private readonly random: () => number;
-  private readonly orbitSign: number;
+  /** 周回・回避で回る向きの個体癖。岩に押し付けられて動けない時は反転する */
+  private orbitSign: number;
   private waypoint: Vec2 = { x: 0, y: 0 };
   private seq = 0;
   private respawnAt = 0;
@@ -144,6 +145,8 @@ export class LocalNpcSim {
   private nextAttackAt = 0;
   private aggroId: string | null = null;
   private aggroUntil = 0;
+  /** 岩に押し付けられたまま進めていない状態の開始時刻 (膠着検知) */
+  private stallSince: number | null = null;
   /** NPC ID 末尾のスロット番号 (ウェーブ編成の引き当てに使う) */
   private readonly slot: number;
 
@@ -231,6 +234,9 @@ export class LocalNpcSim {
 
     let dx: number;
     let dy: number;
+    // 回避操舵が考慮する「目標までの距離」。目標より奥の岩は無視する
+    // (岩を背にしたターゲットへ突撃できなくなるのを防ぐ)
+    let steerTargetDist = Infinity;
     if (nearest && nearestDist <= params.chaseRange) {
       this.mode = nearestDist <= params.attackRange ? 'attack' : 'chase';
       const tx = nearest.pos.x - this.pos.x;
@@ -239,6 +245,7 @@ export class LocalNpcSim {
       if (nearestDist > params.desiredRange + 2) {
         dx = tx * inv;
         dy = ty * inv;
+        steerTargetDist = nearestDist;
       } else {
         // 近距離では周回し、静止した射撃台にならないようにする。
         dx = -ty * inv * this.orbitSign;
@@ -248,16 +255,17 @@ export class LocalNpcSim {
       this.mode = 'wander';
       dx = this.waypoint.x - this.pos.x;
       dy = this.waypoint.y - this.pos.y;
-      const d = Math.hypot(dx, dy);
+      let d = Math.hypot(dx, dy);
       if (d < 1.5) {
         this.pickWaypoint();
         dx = this.waypoint.x - this.pos.x;
         dy = this.waypoint.y - this.pos.y;
+        d = Math.hypot(dx, dy);
       }
-      const inv = Math.hypot(dx, dy);
-      if (inv > 0.001) {
-        dx /= inv;
-        dy /= inv;
+      steerTargetDist = d;
+      if (d > 0.001) {
+        dx /= d;
+        dy /= d;
       }
     }
 
@@ -269,6 +277,7 @@ export class LocalNpcSim {
       NPC_BODY_RADIUS,
       4 + params.speed,
       this.orbitSign > 0 ? 1 : -1,
+      steerTargetDist,
     );
     dx = steered.x;
     dy = steered.y;
@@ -281,9 +290,26 @@ export class LocalNpcSim {
     const k = Math.min(1, dt * 4);
     this.vel.x += (dx * desiredSpeed - this.vel.x) * k;
     this.vel.y += (dy * desiredSpeed - this.vel.y) * k;
+    const prevX = this.pos.x;
+    const prevY = this.pos.y;
     this.pos.x = clamp(this.pos.x + this.vel.x * dt);
     this.pos.y = clamp(this.pos.y + this.vel.y * dt);
-    resolveObstacles(this.pos, NPC_BODY_RADIUS);
+    const pushed = resolveObstacles(this.pos, NPC_BODY_RADIUS);
+    // 膠着検知: 岩に押し付けられたまま実移動がほぼ無い状態が続いたら、
+    // 周回・回避の向きを反転して逃がす (周回円が岩にかかった場合など、
+    // 接線方向の操舵だけでは抜けられない姿勢がある)
+    const moved = Math.hypot(this.pos.x - prevX, this.pos.y - prevY);
+    if (pushed && moved < desiredSpeed * dt * 0.35) {
+      if (this.stallSince === null) {
+        this.stallSince = now;
+      } else if (now - this.stallSince > 400) {
+        this.orbitSign = -this.orbitSign;
+        if (this.mode === 'wander') this.pickWaypoint();
+        this.stallSince = null;
+      }
+    } else {
+      this.stallSince = null;
+    }
     if (Math.hypot(this.vel.x, this.vel.y) > 0.1) {
       this.heading = Math.atan2(this.vel.y, this.vel.x);
     }

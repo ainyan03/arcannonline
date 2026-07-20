@@ -113,13 +113,14 @@ export class LocalPlayerSim {
         // 到着間際は減速して行き過ぎ (目標地点の周回) を防ぐ
         const speed = Math.min(PLAYER_SPEED, d * ARRIVE_GAIN);
         // タップ移動も進路上の岩を接線方向へ避ける (正面での膠着防止)。
-        // キー/スティックの手動操作には介入しない
+        // 目標地点より奥の岩は無視し、キー/スティックの手動操作には介入しない
         const dir = steerAroundObstacles(
           this.pos,
           { x: dx / d, y: dy / d },
           BODY_RADIUS,
           6,
           1,
+          d,
         );
         targetVx = dir.x * speed;
         targetVy = dir.y * speed;

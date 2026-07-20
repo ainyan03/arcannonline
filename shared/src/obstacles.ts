@@ -86,6 +86,9 @@ export function isBlocked(x: number, y: number, margin: number): boolean {
  * 障害物が進路の左右どちらに寄っているかで回る向きを決め、
  * ちょうど正面の場合だけ preferredSide (呼び出し側の個体癖) で決める。
  * @param dir 単位ベクトルの進行方向
+ * @param targetDist 目標までの距離。これより奥の障害物は進路を塞がないので
+ *   無視する (岩を背にしたターゲットへ突撃できなくなるのを防ぐ)。
+ *   目標が「地点」でない周回移動などでは Infinity を渡す
  * @returns 補正後の単位ベクトル (脅威がなければ dir をそのまま返す)
  */
 export function steerAroundObstacles(
@@ -94,6 +97,7 @@ export function steerAroundObstacles(
   radius: number,
   lookahead: number,
   preferredSide: 1 | -1,
+  targetDist = Infinity,
 ): Vec2 {
   let bestThreat = 0;
   let steerX = 0;
@@ -101,9 +105,10 @@ export function steerAroundObstacles(
   for (const o of MOVE_BLOCKERS) {
     const ax = o.x - pos.x;
     const ay = o.y - pos.y;
-    // 後方や遠方の障害物は無視する
+    // 後方や遠方、目標より奥の障害物は無視する
     const proj = ax * dir.x + ay * dir.y;
     if (proj <= 0) continue;
+    if (proj - o.r > targetDist) continue;
     const dist = Math.hypot(ax, ay);
     if (dist - o.r - radius > lookahead) continue;
     // 進路 (半直線) から障害物中心までの符号付き横距離。正 = 左に寄っている

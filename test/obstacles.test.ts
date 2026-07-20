@@ -108,6 +108,50 @@ describe('steerAroundObstacles', () => {
   });
 });
 
+describe('stuck-recovery regressions', () => {
+  const rock = OBSTACLES[8]; // (52, 8, r=3) 孤立した岩
+
+  it('orbiting npc pinned against a rock keeps moving (orbit direction flips)', () => {
+    // 周回円が岩にかかる配置: 岩の面に接した状態で至近の目標を周回させる
+    const npc = new LocalNpcSim('a'.repeat(64) + ':npc:0', 0);
+    npc.pos.x = rock.x - rock.r - 0.8;
+    npc.pos.y = rock.y;
+    const target = { id: 't', pos: { x: rock.x + 3.5, y: rock.y } };
+    let now = 1_000;
+    let travelled = 0;
+    let prevX = npc.pos.x;
+    let prevY = npc.pos.y;
+    for (let i = 0; i < 60 * 12; i++) {
+      now += 1000 / 60;
+      npc.update(1 / 60, now, [target]);
+      travelled += Math.hypot(npc.pos.x - prevX, npc.pos.y - prevY);
+      prevX = npc.pos.x;
+      prevY = npc.pos.y;
+    }
+    // 膠着すると小刻みな震えだけで移動量がほぼ 0 になる
+    expect(travelled).toBeGreaterThan(10);
+  });
+
+  it('rusher explodes on a target standing in front of a rock', () => {
+    // 目標より奥の岩を避けようとして、目標ごと迂回してしまう回帰の検証
+    const npc = new LocalNpcSim('b'.repeat(64) + ':npc:1', 0, 'rusher');
+    npc.pos.x = rock.x - 17;
+    npc.pos.y = rock.y;
+    const target = { id: '2'.repeat(64), pos: { x: rock.x - rock.r - 1.5, y: rock.y } };
+    let exploded = false;
+    let now = 1_000;
+    for (let i = 0; i < 60 * 5; i++) {
+      now += 1000 / 60;
+      const attack = npc.update(1 / 60, now, [target]);
+      if (attack?.explode) {
+        exploded = true;
+        break;
+      }
+    }
+    expect(exploded).toBe(true);
+  });
+});
+
 describe('movement collision', () => {
   it('player cannot enter a rock', () => {
     const o = OBSTACLES[0];
