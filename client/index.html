@@ -2,7 +2,12 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale=1: iOS がフォーム入力時に自動ズームして fixed UI が
+         画面外へはみ出したまま戻らなくなるのを防ぐ (ピンチズーム抑止と同時) -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no"
+    />
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self' https://*.googleapis.com https://*.firebaseapp.com wss://relay.damus.io wss://nos.lol wss://relay.nostr.band wss://nostr.mom wss://relay.primal.net wss://offchain.pub wss://nostr.oxtr.dev wss://relay.snort.social; frame-src https://arcannonline.firebaseapp.com https://github.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self' https://github.com"
@@ -92,7 +97,8 @@
         width: 100%;
         max-width: 560px;
         padding: 7px 10px;
-        font-size: 13px;
+        /* 16px 未満だと iOS がフォーカス時に自動ズームする */
+        font-size: 16px;
         border: none;
         border-radius: 6px;
         background: rgba(255, 255, 255, 0.55);
@@ -332,7 +338,8 @@
       }
       .panel select {
         flex: 1;
-        font-size: 14px;
+        /* 16px 未満だと iOS がフォーカス時に自動ズームする */
+        font-size: 16px;
         padding: 6px;
         border: none;
         border-radius: 4px;

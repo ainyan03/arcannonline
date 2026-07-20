@@ -74,9 +74,10 @@ const SPAWN_RANGE = 30;
 const STALE_REMOTE_MS = 10_000;
 
 /**
- * この時間なんの入力もなければ AFK とみなして自動退室する。
+ * タブが裏に回ったままこの時間なんの入力もなければ AFK とみなして自動退室する。
  * バックグラウンドタブは生存維持で他画面に残り続けるため、放置された
- * タブが「動かないキャラ」として溜まり続けるのを防ぐ (bot モードは対象外)
+ * タブが「動かないキャラ」として溜まり続けるのを防ぐ (bot モードは対象外)。
+ * タブが前面にある間は観戦などの意図的な放置とみなして退室させない
  */
 const AFK_TIMEOUT_MS = 300_000;
 
@@ -153,6 +154,8 @@ export class Game {
   private scriptId = DEFAULT_SCRIPT_ID;
   private lastFireAt = 0;
   private lastAutoFireAt = 0;
+  private viewportW = 0;
+  private viewportH = 0;
   private fireHeld = false;
   private downAt = 0;
   private downX = 0;
@@ -456,10 +459,10 @@ export class Game {
       );
     }
 
-    this.listenWindow('resize', () => {
-      this.world.renderer.setSize(window.innerWidth, window.innerHeight);
-      this.camera.resize(window.innerWidth / window.innerHeight);
-    });
+    // resize イベントは iOS の画面回転で取りこぼしたり回転前の寸法で
+    // 発火したりするため、イベントに加えて毎フレーム実寸比較でも追従する
+    // (syncViewportSize)。ここは即応用
+    this.listenWindow('resize', () => this.syncViewportSize());
     // beforeunload はモバイルで発火しないことが多い。pagehide なら
     // 画面ロックやタブ切替による破棄・凍結時にも比較的確実に呼ばれるため、
     // ここで退室してゴースト (残留ピア情報) を残さないようにする
@@ -509,9 +512,13 @@ export class Game {
     // (間隔は指数バックオフで最大5分まで延ばし、リレーへの負荷増を防ぐ)
     this.intervalIds.push(window.setInterval(() => {
       const now = performance.now();
-      // 長時間入力がなければ AFK として退室し、参加画面へ戻る
-      // (放置タブのキャラが他画面に残り続けるのを防ぐ)
-      if (now - this.lastInputAt > AFK_TIMEOUT_MS) {
+      // タブが前面にある間は AFK とみなさない (観戦などの意図的な放置を許容)。
+      // 裏に回った時点から無入力タイマーが進み始める
+      if (document.visibilityState === 'visible') {
+        this.lastInputAt = now;
+      } else if (now - this.lastInputAt > AFK_TIMEOUT_MS) {
+        // 裏に回ったまま長時間入力がなければ AFK として退室し、参加画面へ
+        // 戻る (放置タブのキャラが他画面に残り続けるのを防ぐ)
         sessionStorage.removeItem('arcn-autojoin');
         this.dispose();
         location.reload();
@@ -569,7 +576,23 @@ export class Game {
     );
   }
 
+  /**
+   * 描画サイズを実際のウィンドウ寸法に一致させる。resize イベント頼みだと
+   * iOS Safari の画面回転で「発火しない/回転前の寸法で発火する」ことが
+   * あるため、毎フレーム呼んで寸法変化を検知したときだけ適用する
+   */
+  private syncViewportSize(): void {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (w === this.viewportW && h === this.viewportH) return;
+    this.viewportW = w;
+    this.viewportH = h;
+    this.world.renderer.setSize(w, h);
+    this.camera.resize(w / h);
+  }
+
   private frame(now: number): void {
+    this.syncViewportSize();
     const dtMs = Math.min(now - this.lastFrame, 50);
     this.lastFrame = now;
     const dt = dtMs / 1000;

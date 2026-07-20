@@ -36,6 +36,11 @@ export class ChatUI {
         this.input.blur();
       }
     });
+    // iOS はソフトキーボード表示時にページ全体をスクロールさせることがあり、
+    // 閉じた後も fixed 配置の UI が画面外にずれたまま残る。入力終了時に戻す
+    this.input.addEventListener('blur', () => {
+      window.scrollTo(0, 0);
+    });
   }
 
   /** 入力欄にフォーカスがあるか (ゲーム側のキー処理の抑止判定に使える) */
