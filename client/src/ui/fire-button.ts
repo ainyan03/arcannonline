@@ -1,9 +1,11 @@
 /**
  * 画面右下の仮想発射ボタンと、クラス固定のボム名を示すラベルチップ。
- * ボタンは押している間 held 状態になり、ゲーム側がクールダウン毎に連射する。
+ * ボタンは押している間 held 状態になる。通常はクールダウン毎の連射、
+ * ガーデンでは長押し照準とリリース確定に使われる。
  */
 export class FireButtonUI {
-  onHoldChange?: (held: boolean) => void;
+  /** held=false の commit は通常のリリースなら true、キャンセルなら false。 */
+  onHoldChange?: (held: boolean, commit: boolean) => void;
 
   private readonly chip: HTMLElement;
   private readonly btn: HTMLButtonElement;
@@ -21,7 +23,8 @@ export class FireButtonUI {
     this.chip.className = 'script-chip';
     container.appendChild(this.chip);
 
-    const setHeld = (held: boolean) => this.onHoldChange?.(held);
+    const setHeld = (held: boolean, commit = false) =>
+      this.onHoldChange?.(held, commit);
     btn.addEventListener('pointerdown', (e) => {
       e.preventDefault();
       try {
@@ -32,12 +35,12 @@ export class FireButtonUI {
       btn.classList.add('held');
       setHeld(true);
     });
-    const release = () => {
+    const release = (commit: boolean) => {
       btn.classList.remove('held');
-      setHeld(false);
+      setHeld(false, commit);
     };
-    btn.addEventListener('pointerup', release);
-    btn.addEventListener('pointercancel', release);
+    btn.addEventListener('pointerup', () => release(true));
+    btn.addEventListener('pointercancel', () => release(false));
     btn.addEventListener('contextmenu', (e) => e.preventDefault());
     btn.addEventListener('keydown', (e) => {
       if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
@@ -51,7 +54,7 @@ export class FireButtonUI {
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();
-        release();
+        release(true);
       }
     });
   }

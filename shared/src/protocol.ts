@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 31;
+export const PROTO_VERSION = 32;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -306,7 +306,7 @@ export const TRAIL_TURN_MUL = 1.5;
 export const TRAIL_BURST_INTERVAL_MS = 45;
 
 // --- ブルームガーデン (花の魔女のボム) ------------------------------------
-// 前方または敵集団へ花園を設置し、周期ダメージと最終開花で制圧する。
+// 長押し照準で自機前方へ花園を設置し、周期ダメージと最終開花で制圧する。
 // ダメージは対象NPCの担当ピアだけが確定し、視覚は各端末で再生する。
 
 export const GARDEN_COST = 120;
@@ -316,8 +316,12 @@ export const GARDEN_RADIUS = 12;
 export const GARDEN_FINAL_RADIUS = 14;
 export const GARDEN_PULSE_DAMAGE = 5;
 export const GARDEN_FINAL_DAMAGE = 28;
-export const GARDEN_FORWARD_OFFSET = 15;
-export const GARDEN_SEARCH_RANGE = 55;
+/** 長押し照準の開始距離。短押し時もこの距離へ設置する */
+export const GARDEN_AIM_MIN_DISTANCE = 15;
+/** 長押し照準の最大距離 */
+export const GARDEN_AIM_MAX_DISTANCE = 35;
+/** 最短から最長まで照準を伸ばす時間 */
+export const GARDEN_AIM_CHARGE_MS = 900;
 
 export interface GardenEvent {
   id: string;

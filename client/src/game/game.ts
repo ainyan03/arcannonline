@@ -22,15 +22,16 @@ import {
 } from '../../../shared/src/npc-scripts';
 import {
   AUTO_SHOT_RANGE,
+  GARDEN_AIM_CHARGE_MS,
+  GARDEN_AIM_MAX_DISTANCE,
+  GARDEN_AIM_MIN_DISTANCE,
   GARDEN_COST,
   GARDEN_DURATION_MS,
   GARDEN_FINAL_DAMAGE,
   GARDEN_FINAL_RADIUS,
-  GARDEN_FORWARD_OFFSET,
   GARDEN_PULSE_DAMAGE,
   GARDEN_PULSE_INTERVAL_MS,
   GARDEN_RADIUS,
-  GARDEN_SEARCH_RANGE,
   MISSILE_BOSS_DAMAGE,
   MISSILE_COST_PER_SHOT,
   MISSILE_COUNT,
@@ -102,7 +103,8 @@ import { UpdateBannerUI } from '../ui/update-banner';
 import { WaveBannerUI } from '../ui/wave-banner';
 import { LocalPlayerSim } from '../sim/local-player';
 import {
-  chooseGardenCenter,
+  gardenAimCenter,
+  gardenAimDistance,
   isInFront,
   planMissileVolley,
 } from '../sim/targeting';
@@ -280,6 +282,11 @@ export class Game {
   private trailUntil = 0;
   private trailNextAt = 0;
   private gardenUntil = 0;
+  /** ガーデン照準の入力元。別入力の解放による誤発動を防ぐ。 */
+  private gardenAim: {
+    startedAt: number;
+    source: 'button' | 'keyboard';
+  } | null = null;
   private readonly trailPoints: Vec2[] = [];
   private readonly pendingTrailBursts: { pos: Vec2; at: number }[] = [];
   /** 受信済みガーデン。周期ダメージは各NPCの担当ピアだけが適用する */
@@ -443,7 +450,13 @@ export class Game {
     // 仮想発射ボタン: 押している間はクールダウン毎に連射される
     this.fireBtn = new FireButtonUI(container);
     this.waveBanner = new WaveBannerUI(container);
-    this.fireBtn.onHoldChange = (held) => {
+    this.fireBtn.onHoldChange = (held, commit) => {
+      if ((this.classStyle ?? 0) === 3) {
+        this.fireHeld = false;
+        if (held) this.beginGardenAim(performance.now(), 'button');
+        else this.endGardenAim(performance.now(), 'button', commit);
+        return;
+      }
       this.fireHeld = held;
       if (held) this.fire();
     };
@@ -789,6 +802,7 @@ export class Game {
     this.missileView.dispose();
     this.novaView.dispose();
     this.trailView.dispose();
+    this.cancelGardenAim();
     this.gardenView.dispose();
     this.playerView.dispose();
     for (const remote of this.remotes.values()) remote.view.dispose();
@@ -844,6 +858,7 @@ export class Game {
 
     // 仮想発射ボタンの長押し連射 (クールダウンは fire() 側で効く)
     if (this.fireHeld) this.fire();
+    this.updateGardenAim(now);
     // 通常ショット: 索敵距離内かつ自機前方に敵がいれば自動発射
     // (エネルギー消費なし)
     this.autoFire(now);
@@ -1388,7 +1403,7 @@ export class Game {
       return;
     }
     if (style === 3) {
-      this.fireGarden(now);
+      this.beginGardenAim(now, 'keyboard');
       return;
     }
     const source = DANMAKU_SCRIPTS[this.bombScriptId]?.source ?? null;
@@ -1627,7 +1642,11 @@ export class Game {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
       if (e.code === 'Space') {
         e.preventDefault();
-        this.fire();
+        if ((this.classStyle ?? 0) === 3) {
+          if (!e.repeat) this.beginGardenAim(performance.now(), 'keyboard');
+        } else {
+          this.fire();
+        }
         return;
       }
       if (e.code === 'Enter') {
@@ -1636,6 +1655,12 @@ export class Game {
         return;
       }
     });
+    this.listenWindow('keyup', (e) => {
+      if (e.code !== 'Space' || (this.classStyle ?? 0) !== 3) return;
+      e.preventDefault();
+      this.endGardenAim(performance.now(), 'keyboard', true);
+    });
+    this.listenWindow('blur', () => this.cancelGardenAim());
 
     const dom = this.world.renderer.domElement;
 
@@ -1953,18 +1978,74 @@ export class Game {
     else this.room.broadcastFire(ev);
   }
 
-  /** ブルームガーデンを敵集団または自機前方へ設置する。 */
-  private fireGarden(now: number): void {
-    if (now < this.gardenUntil) return;
-    if (!this.player.trySpendEnergy(GARDEN_COST)) return;
-    const center = chooseGardenCenter(
+  private beginGardenAim(
+    now: number,
+    source: 'button' | 'keyboard',
+  ): void {
+    if (this.gardenAim || now < this.gardenUntil) return;
+    if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
+    if (this.inSanctuary() || this.player.energy < GARDEN_COST) return;
+    this.gardenAim = { startedAt: now, source };
+    this.updateGardenAim(now);
+  }
+
+  private gardenAimSnapshot(now: number): { center: Vec2; distance: number } {
+    const elapsed = this.gardenAim ? now - this.gardenAim.startedAt : 0;
+    const requestedDistance = gardenAimDistance(
+      elapsed,
+      GARDEN_AIM_MIN_DISTANCE,
+      GARDEN_AIM_MAX_DISTANCE,
+      GARDEN_AIM_CHARGE_MS,
+    );
+    const center = gardenAimCenter(
       this.player.pos,
       this.player.heading,
-      this.gardenEnemyPositions(),
-      GARDEN_FORWARD_OFFSET,
-      GARDEN_SEARCH_RANGE,
+      requestedDistance,
       GARDEN_RADIUS,
     );
+    return {
+      center,
+      distance: Math.hypot(
+        center.x - this.player.pos.x,
+        center.y - this.player.pos.y,
+      ),
+    };
+  }
+
+  private updateGardenAim(now: number): void {
+    if (!this.gardenAim) return;
+    const aim = this.gardenAimSnapshot(now);
+    this.gardenView.showAim(
+      this.player.pos.x,
+      this.player.pos.y,
+      aim.center.x,
+      aim.center.y,
+      aim.distance,
+    );
+  }
+
+  private endGardenAim(
+    now: number,
+    source: 'button' | 'keyboard',
+    commit: boolean,
+  ): void {
+    if (!this.gardenAim || this.gardenAim.source !== source) return;
+    const { center } = this.gardenAimSnapshot(now);
+    this.gardenAim = null;
+    this.gardenView.hideAim();
+    if (commit) this.fireGarden(now, center);
+  }
+
+  private cancelGardenAim(): void {
+    this.gardenAim = null;
+    this.gardenView.hideAim();
+  }
+
+  /** 照準で確定した地点へブルームガーデンを設置する。 */
+  private fireGarden(now: number, center: Vec2): void {
+    if (now < this.gardenUntil) return;
+    if (this.inSanctuary()) return;
+    if (!this.player.trySpendEnergy(GARDEN_COST)) return;
     this.lastFireAt = now;
     this.gardenUntil = now + GARDEN_DURATION_MS;
     this.player.invulnUntil = Math.max(
@@ -1983,19 +2064,6 @@ export class Game {
     this.emitEffectScript('garden', center, this.player.heading, false);
     this.audio.playFire();
     this.updateHud();
-  }
-
-  private gardenEnemyPositions(): Vec2[] {
-    const result: Vec2[] = [];
-    for (const npc of this.localNpcs) {
-      if (npc.sim.alive) result.push({ ...npc.sim.pos });
-    }
-    for (const npc of this.remoteNpcs.values()) {
-      if (npc.sim.mode !== 'dead') {
-        result.push({ x: npc.sim.lastX, y: npc.sim.lastY });
-      }
-    }
-    return result;
   }
 
   private handleGarden(fromId: string, ev: GardenEvent, delayMs: number): void {
@@ -2387,7 +2455,7 @@ export class Game {
       `enemies: ${this.localNpcs.filter((npc) => npc.sim.alive).length}` +
       ` local / ${this.remoteNpcs.size} remote\n` +
       `bullets: ${this.engine.aliveCount} fps: ${this.fps}\n` +
-      `[Space]ボム: ${scriptName} (通常ショットは自動)\n` +
+      `${style === 3 ? '[Space長押し→離す]' : '[Space]'}ボム: ${scriptName} (通常ショットは自動)\n` +
       `[Enter]チャット`;
   }
 }

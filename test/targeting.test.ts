@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  chooseGardenCenter,
+  gardenAimCenter,
+  gardenAimDistance,
   isInFront,
   planMissileVolley,
 } from '../client/src/sim/targeting';
@@ -70,29 +71,27 @@ describe('planMissileVolley', () => {
   });
 });
 
-describe('chooseGardenCenter', () => {
-  it('uses a forward placement when no enemy is in range', () => {
-    expect(chooseGardenCenter({ x: 0, y: 0 }, 0, [], 15, 55, 12)).toEqual({
+describe('garden aiming', () => {
+  it('extends from minimum to maximum distance while charging', () => {
+    expect(gardenAimDistance(0, 15, 35, 900)).toBe(15);
+    expect(gardenAimDistance(450, 15, 35, 900)).toBe(25);
+    expect(gardenAimDistance(1_800, 15, 35, 900)).toBe(35);
+  });
+
+  it('places the center at a controlled distance in front', () => {
+    expect(gardenAimCenter({ x: 0, y: 0 }, 0, 15, 12)).toEqual({
       x: 15,
       y: 0,
     });
+    const vertical = gardenAimCenter({ x: 2, y: 3 }, Math.PI / 2, 25, 12);
+    expect(vertical.x).toBeCloseTo(2);
+    expect(vertical.y).toBeCloseTo(28);
   });
 
-  it('selects the densest enemy cluster rather than an isolated target', () => {
-    const center = chooseGardenCenter(
-      { x: 0, y: 0 },
-      0,
-      [
-        { x: 8, y: 20 },
-        { x: 29, y: 1 },
-        { x: 31, y: -1 },
-        { x: 30, y: 2 },
-      ],
-      15,
-      55,
-      12,
-    );
-    expect(center.x).toBeCloseTo(30);
-    expect(center.y).toBeCloseTo(2 / 3);
+  it('keeps the whole garden inside the field', () => {
+    expect(gardenAimCenter({ x: 90, y: 90 }, 0, 35, 12)).toEqual({
+      x: 88,
+      y: 88,
+    });
   });
 });
