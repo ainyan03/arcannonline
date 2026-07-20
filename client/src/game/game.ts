@@ -951,20 +951,19 @@ export class Game {
   }
 
   /**
-   * 通常ショット: 索敵距離内で最も近い敵へ自動発射する基本攻撃。
+   * 通常ショット: 索敵距離内に敵がいる間、自機の向きへランダムに拡散発射する
+   * 基本攻撃 (自動照準はしない。狙いは移動で付ける)。
    * エネルギーを消費せず、強攻撃 (fire) とは独立したクールダウンで動く。
    * 単発の即時完了スクリプトなので、多段シーケンス保護の ownerHasRun
    * ゲートは通さない (強攻撃の展開中でも通常ショットは撃てる)
    */
   private autoFire(now: number): void {
     if (now - this.lastAutoFireAt < AUTO_SHOT_COOLDOWN_MS) return;
-    const target = this.nearestEnemy(AUTO_SHOT_RANGE);
-    if (!target) return;
+    if (!this.nearestEnemy(AUTO_SHOT_RANGE)) return;
     this.lastAutoFireAt = now;
 
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
     const sourceVelocity = this.player.getVelocity();
-    const targetPos = target.pos;
     const seed = (Math.random() * 0x100000000) >>> 0;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
@@ -976,9 +975,6 @@ export class Game {
       vx: sourceVelocity.x,
       vy: sourceVelocity.y,
       at: Date.now(),
-      target: target.id,
-      tx: targetPos.x,
-      ty: targetPos.y,
     };
     this.seenFireIds.add(ev.id);
     this.engine.startScript(
@@ -987,7 +983,7 @@ export class Game {
       () => origin,
       ev.dir,
       this.room.selfId,
-      () => targetPos,
+      undefined,
       0,
       ev.id,
       {

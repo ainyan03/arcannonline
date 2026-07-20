@@ -22,13 +22,14 @@ export interface DanmakuScript {
 }
 
 /**
- * 通常ショット: 近くの敵へ自動発射される、エネルギーを消費しない基本攻撃。
+ * 通常ショット: 敵が近くにいると自動発射される、エネルギーを消費しない基本攻撃。
  * DANMAKU_SCRIPTS (強攻撃の選択肢) には含めず、ID で直接参照する。
+ * 自動照準はせず、自機の向きへランダムに拡散して飛ぶ (狙いは移動で付ける)。
  * ウィスプ (HP 24) を3発で倒せる耐久度。射程 ≒ 速度28 × 1.6秒 ≒ 45
  */
 export const NORMAL_SHOT_SCRIPT_ID = 'normal-shot';
 export const NORMAL_SHOT_SCRIPT_SOURCE = `
-fire(aim, 28, 8, 0.2, 1.6);
+fire(dir + rand(0 - 10, 10), 28, 8, 0.2, 1.6);
 `;
 
 // 同梱スクリプトは「強攻撃」— エネルギーを消費する代わりに敵 (HP 24) を
