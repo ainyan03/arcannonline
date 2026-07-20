@@ -561,6 +561,7 @@ export class Game {
     for (const remove of this.windowDisposers.splice(0)) remove();
     this.accountUnsubscribe();
     this.input.dispose();
+    this.chat.dispose();
     this.audio.dispose();
     this.room.leave();
   }

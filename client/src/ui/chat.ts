@@ -7,12 +7,28 @@ const MAX_LINES = 8;
 export class ChatUI {
   onSend?: (text: string) => void;
 
+  private readonly root: HTMLElement;
   private readonly log: HTMLElement;
   private readonly input: HTMLInputElement;
 
+  /**
+   * ソフトキーボード対策。iOS はフォーカス時に入力欄を見せようとページごと
+   * スクロールさせるため、fixed 配置のゲーム画面全体が過剰に上へずれる。
+   * スクロールは打ち消してゲーム画面を固定したまま、キーボードに隠れる
+   * 高さぶんだけチャット枠を transform で持ち上げる
+   */
+  private readonly liftForKeyboard = () => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    if (this.isOpen) window.scrollTo(0, 0);
+    const hidden = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+    this.root.style.transform =
+      this.isOpen && hidden > 0 ? `translateY(${-hidden}px)` : '';
+  };
+
   constructor(container: HTMLElement) {
-    const root = document.createElement('div');
-    root.className = 'chat';
+    this.root = document.createElement('div');
+    this.root.className = 'chat';
     this.log = document.createElement('div');
     this.log.className = 'chat-log';
     this.input = document.createElement('input');
@@ -20,8 +36,8 @@ export class ChatUI {
     this.input.type = 'text';
     this.input.maxLength = 200;
     this.input.placeholder = 'チャット… (Enterで送信)';
-    root.append(this.log, this.input);
-    container.appendChild(root);
+    this.root.append(this.log, this.input);
+    container.appendChild(this.root);
 
     this.input.addEventListener('keydown', (e) => {
       e.stopPropagation();
@@ -36,11 +52,24 @@ export class ChatUI {
         this.input.blur();
       }
     });
-    // iOS はソフトキーボード表示時にページ全体をスクロールさせることがあり、
-    // 閉じた後も fixed 配置の UI が画面外にずれたまま残る。入力終了時に戻す
+    // キーボードの出現・消滅はビューポート寸法の変化として現れる
+    window.visualViewport?.addEventListener('resize', this.liftForKeyboard);
+    window.visualViewport?.addEventListener('scroll', this.liftForKeyboard);
+    this.input.addEventListener('focus', () => {
+      // キーボード表示確定のタイミングが端末依存のため、少し遅れても補正する
+      setTimeout(this.liftForKeyboard, 50);
+      setTimeout(this.liftForKeyboard, 250);
+    });
     this.input.addEventListener('blur', () => {
+      // 持ち上げを戻し、キーボードでずれたスクロールも復元する
+      this.root.style.transform = '';
       window.scrollTo(0, 0);
     });
+  }
+
+  dispose(): void {
+    window.visualViewport?.removeEventListener('resize', this.liftForKeyboard);
+    window.visualViewport?.removeEventListener('scroll', this.liftForKeyboard);
   }
 
   /** 入力欄にフォーカスがあるか (ゲーム側のキー処理の抑止判定に使える) */
