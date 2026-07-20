@@ -125,6 +125,11 @@ export class NostrSignaling {
     }
   }
 
+  /** 32バイトのダイジェストへ自分のピア鍵で schnorr 署名する (hex を返す) */
+  signDigest(digest: Uint8Array): string {
+    return bytesToHex(schnorr.sign(digest, this.privkey));
+  }
+
   publish(content: string): void {
     const created_at = Math.floor(Date.now() / 1000);
     const tags = [['t', this.topic]];

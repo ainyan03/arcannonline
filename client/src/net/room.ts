@@ -130,8 +130,9 @@ export class GameRoom {
     this.mesh.broadcastBaseHit(ev);
   }
 
-  broadcastBaseSync(hits: BaseHitEvent[]): void {
-    this.mesh.broadcastBaseSync(hits);
+  /** 拠点の命中履歴を特定ピアだけへ送る (新規開通時の初期同期用) */
+  sendBaseSyncTo(id: string, hits: BaseHitEvent[]): void {
+    this.mesh.sendBaseSyncTo(id, hits);
   }
 
   broadcastProfile(token: string): void {

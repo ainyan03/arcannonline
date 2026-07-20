@@ -34,6 +34,8 @@ const JWT_RE = /^[\w-]+\.[\w-]+\.[\w-]+$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const MAX_SIGNAL_SDP_LEN = 64_000;
 const MAX_SIGNAL_ID_LEN = 128;
+/** schnorr 署名 (64 bytes) の hex 表現 */
+const SCHNORR_SIG_RE = /^[0-9a-f]{128}$/;
 
 function record(value: unknown): JsonRecord | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -184,8 +186,16 @@ export function parseSignalEnvelope(value: unknown): SignalEnvelope | null {
   const v = record(value);
   if (!v || !shortString(v.id, MAX_SIGNAL_ID_LEN) || v.id.length === 0) return null;
   if (!isPeerId(v.to) || !isPeerId(v.from)) return null;
+  if (
+    v.sig !== undefined &&
+    (typeof v.sig !== 'string' || !SCHNORR_SIG_RE.test(v.sig))
+  ) {
+    return null;
+  }
   const payload = parseSignalPayload(v.payload);
-  return payload ? { id: v.id, to: v.to, from: v.from, payload } : null;
+  return payload
+    ? { id: v.id, to: v.to, from: v.from, payload, sig: v.sig as string | undefined }
+    : null;
 }
 
 export function parseFireEvent(value: unknown): FireEvent | null {

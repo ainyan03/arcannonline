@@ -109,6 +109,12 @@ export interface SignalEnvelope {
   to: string;
   from: string;
   payload: SignalPayload;
+  /**
+   * from の鍵による封筒ダイジェストの schnorr 署名 (hex 128文字)。
+   * Nostr 経由はイベント署名で送信元が保証されるが、メッシュ中継では
+   * 中継者が from を詐称できるため、封筒自体の署名で送信元を検証する
+   */
+  sig?: string;
 }
 
 // ---------------------------------------------------------------------------

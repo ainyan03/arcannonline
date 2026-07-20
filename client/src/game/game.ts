@@ -314,12 +314,14 @@ export class Game {
       this.world.scene.add(view.object);
     }
     // 接続確立の瞬間に1発送る: 新規参加者が、アイドル中(タイマー間引き中)の
-    // 既存プレイヤーの位置も即座に受け取れるようにする
-    this.room.onPeerJoin = () => {
+    // 既存プレイヤーの位置も即座に受け取れるようにする。
+    // 拠点履歴は開通した相手だけへ送る (全員ブロードキャストだと
+    // N人ルームへの1人参加で N×N 通に膨らむ)
+    this.room.onPeerJoin = (id) => {
       this.sendStateNow();
       this.sendNpcsNow();
       this.sendProfileNow();
-      this.room.broadcastBaseSync(this.baseDefense.snapshot());
+      this.room.sendBaseSyncTo(id, this.baseDefense.snapshot());
     };
     this.room.onState = (id, state) => {
       const now = performance.now();

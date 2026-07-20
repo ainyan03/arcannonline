@@ -4,6 +4,8 @@
 // - シグナリングは「Nostr リレー経由」と「確立済みメッシュでの中継」の二重送信。
 //   封筒 (SignalEnvelope) の id で重複排除するため、どちらが先に届いてもよい。
 //   これによりリレーへの依存は事実上「最初の1本の接続確立」だけになる
+// - 封筒には送信元ピア鍵の schnorr 署名を付け、経路自体に署名がない
+//   メッシュ中継分は封筒署名の検証を通ったものだけを配送・転送する
 import {
   CONNECT_TIMEOUT_MS,
   MAX_PEERS,
@@ -22,6 +24,7 @@ import {
 } from '../../../shared/src/protocol';
 import type { NostrSignaling } from './nostr';
 import { parseNostrContent } from '../../../shared/src/validation';
+import { signalEnvelopeDigest, verifySignalEnvelope } from './signal-auth';
 import { Peer } from './peer';
 import {
   MAX_CONNECTING_PEERS,
@@ -31,6 +34,8 @@ import {
 const ENV_SEEN_MAX = 2_000;
 /** プレゼンス即時応答のレート制限 */
 const PRESENCE_REPLY_MIN_MS = 2_000;
+/** メッシュ中継封筒の署名検証回数の上限 (検証CPUを浪費させる攻撃の抑止) */
+const MAX_ENV_VERIFY_PER_SEC = 256;
 
 interface PeerEntry {
   peer: Peer;
@@ -62,6 +67,8 @@ export class Mesh {
   private readonly presenceSeen = new Map<string, number>();
   private readonly envSeen = new Set<string>();
   private lastPresenceSentAt = 0;
+  private envVerifyWindowAt = 0;
+  private envVerifyChecks = 0;
   private txCount = 0;
   private rxCount = 0;
   private relayedCount = 0;
@@ -145,10 +152,10 @@ export class Mesh {
     }
   }
 
-  broadcastBaseSync(hits: BaseHitEvent[]): void {
-    for (const e of this.peers.values()) {
-      if (e.peer.isOpen) e.peer.sendReliable({ type: 'base-sync', hits });
-    }
+  /** 拠点の命中履歴を特定ピアだけへ送る (新規開通時の初期同期用) */
+  sendBaseSyncTo(id: string, hits: BaseHitEvent[]): void {
+    const e = this.peers.get(id);
+    if (e?.peer.isOpen) e.peer.sendReliable({ type: 'base-sync', hits });
   }
 
   broadcastProfile(token: string): void {
@@ -289,6 +296,9 @@ export class Mesh {
   // --- シグナリング -----------------------------------------------------------
 
   private sendSignal(env: SignalEnvelope): void {
+    // メッシュ中継の受信側が送信元を検証できるよう封筒に署名する
+    // (Nostr 経路しか通らない場合も付けたままで害はない)
+    env.sig = this.nostr.signDigest(signalEnvelopeDigest(env));
     this.rememberEnv(env.id);
     // 経路1: Nostr リレー
     this.publish({ t: 'signal', env });
@@ -333,9 +343,15 @@ export class Mesh {
       }
       case 'sig': {
         const env = msg.env;
+        // メッシュ中継はリレーと違い経路に署名がなく from を詐称できるため、
+        // 封筒の署名が from の鍵によるものだと確認できたときだけ扱う。
+        // 検証失敗時に id を記憶しない: 偽署名で本物の封筒 id を先に
+        // 潰される (重複扱いで破棄される) のを防ぐ
+        if (this.envSeen.has(env.id)) break;
+        if (!this.allowEnvVerify() || !verifySignalEnvelope(env)) break;
         if (env.to === this.selfId) {
           this.deliver(env);
-        } else if (!this.envSeen.has(env.id)) {
+        } else {
           // 宛先と直接繋がっていれば1ホップだけ中継する
           this.rememberEnv(env.id);
           const target = this.peers.get(env.to);
@@ -415,6 +431,18 @@ export class Mesh {
       if (!entry.peer.isOpen) count++;
     }
     return count;
+  }
+
+  /** 中継封筒の署名検証の実行可否 (1秒窓のレート制限) */
+  private allowEnvVerify(): boolean {
+    const now = performance.now();
+    if (now - this.envVerifyWindowAt >= 1_000) {
+      this.envVerifyWindowAt = now;
+      this.envVerifyChecks = 0;
+    }
+    if (this.envVerifyChecks >= MAX_ENV_VERIFY_PER_SEC) return false;
+    this.envVerifyChecks++;
+    return true;
   }
 
   private rememberEnv(id: string): void {
