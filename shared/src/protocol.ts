@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 25;
+export const PROTO_VERSION = 26;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -75,8 +75,8 @@ export const MAX_FIRE_BATCH = 8;
 
 /** 1回のボムで放つミサイル数 */
 export const MISSILE_COUNT = 6;
-/** 1発のダメージ (ウィスプを一撃) */
-export const MISSILE_DAMAGE = 24;
+/** 1発のダメージ (ウィスプは2発。対ボスの溶かしすぎ防止で控えめ) */
+export const MISSILE_DAMAGE = 16;
 /**
  * ミサイルの見かけ速度 (距離/秒)。飛行時間は距離に比例し、
  * どの距離でもホーミングの速度が一定に見える
@@ -263,7 +263,7 @@ export const NPC_KINDS: Record<NpcKind, { name: string; maxHp: number }> = {
   rusher: { name: 'インプ', maxHp: 14 },
   turret: { name: 'ガーゴイル', maxHp: 40 },
   shield: { name: 'ゴーレム', maxHp: 64 },
-  boss: { name: 'アークファントム', maxHp: 600 },
+  boss: { name: 'アークファントム', maxHp: 900 },
 };
 
 /**
