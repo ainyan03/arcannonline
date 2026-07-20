@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 21;
+export const PROTO_VERSION = 22;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -70,7 +70,12 @@ export const MAX_FIRE_BATCH = 8;
 /** 途中参加者へ引き継ぐ直近チャット発言数の上限 */
 export const CHAT_LOG_MAX = 30;
 
-/** チャット履歴の1発言。n は発言時点の表示名 (システム通知は空文字) */
+/**
+ * チャット履歴の1発言。**送信ピア自身の発言だけ**を運ぶ (他人の発言の転送は
+ * しない = 捏造防止。退室したプレイヤーの発言は引き継がれない割り切り)。
+ * 表示名は受信側が送信ピアの state から解決し、この n は使わない
+ * (n はシステム通知 (空文字) か通常発言かの区別にだけ使う)
+ */
 export interface ChatLogEntry {
   id: string;
   n: string;

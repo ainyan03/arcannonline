@@ -321,7 +321,7 @@ export class Game {
         t: text,
         at: Date.now(),
       };
-      this.recordChat(entry);
+      this.recordOwnChat(entry);
       this.room.broadcastChat(text, entry.id, entry.at);
       this.chat.addLine(this.name, text);
     };
@@ -485,18 +485,23 @@ export class Game {
       // 履歴同期との重複表示を防ぐ
       const entryId =
         msgId ?? `${id.slice(0, 8)}|${Math.floor(stamp / 5000)}|${text.slice(0, 24)}`;
-      if (!this.recordChat({ id: entryId, n: name, t: text, at: stamp })) return;
+      if (!this.markChatSeen(entryId)) return;
       // リモートの通常発言を「* 」だけでシステム通知扱いにしない。
       this.chat.addLine(name, text);
       this.audio.playChat();
     };
-    this.room.onChatLog = (_id, entries) => {
+    this.room.onChatLog = (id, entries) => {
+      // 履歴は「送信ピア自身の発言」だけを受け付ける約束。表示名は
+      // 転送データからは取らず、送信ピアの実体から解決する (捏造防止)
+      const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
       const fresh = entries
-        .filter((entry) => !this.seenChatIds.has(entry.id))
+        .filter((entry) => this.markChatSeen(entry.id))
         .sort((a, b) => a.at - b.at);
-      for (const entry of fresh) this.recordChat(entry);
       this.chat.addHistoryLines(
-        fresh.map((entry) => ({ name: entry.n, text: entry.t })),
+        fresh.map((entry) => ({
+          name: entry.n === '' ? '' : name,
+          text: entry.t,
+        })),
       );
     };
     this.room.onPeerLeave = (id) => {
@@ -923,22 +928,29 @@ export class Game {
     return true;
   }
 
-  /** チャット発言を履歴へ記録する。既知IDなら false (重複) */
-  private recordChat(entry: ChatLogEntry): boolean {
-    if (this.seenChatIds.has(entry.id)) return false;
-    this.seenChatIds.add(entry.id);
+  /** 発言IDを既読へ登録する。既知IDなら false (重複) */
+  private markChatSeen(id: string): boolean {
+    if (this.seenChatIds.has(id)) return false;
+    this.seenChatIds.add(id);
     if (this.seenChatIds.size > 500) {
       const it = this.seenChatIds.values();
       for (let i = 0; i < 250; i++) {
         this.seenChatIds.delete(it.next().value as string);
       }
     }
+    return true;
+  }
+
+  /**
+   * 自分の発言を引き継ぎ履歴へ記録する。他人の発言は記録・転送しない
+   * (履歴の捏造防止。退室したプレイヤーの発言は引き継がれない割り切り)
+   */
+  private recordOwnChat(entry: ChatLogEntry): void {
+    this.markChatSeen(entry.id);
     this.chatHistory.push(entry);
-    this.chatHistory.sort((a, b) => a.at - b.at);
     if (this.chatHistory.length > CHAT_LOG_MAX) {
       this.chatHistory.splice(0, this.chatHistory.length - CHAT_LOG_MAX);
     }
-    return true;
   }
 
   /** ボス撃破の告知 (担当・観測どちらの経路でも一度だけ) */
@@ -1140,7 +1152,7 @@ export class Game {
         t: announce,
         at: Date.now(),
       };
-      this.recordChat(entry);
+      this.recordOwnChat(entry);
       this.chat.addLine('', announce, true);
       this.room.broadcastChat(announce, entry.id, entry.at);
       const spawn = pickSpawnPoint();
