@@ -22,6 +22,7 @@ import {
   BASE_ID,
   BASE_MAX_HP,
   BULLET_INHERIT_VELOCITY,
+  CHAT_LOG_MAX,
   ENERGY_MAX,
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
@@ -36,6 +37,7 @@ import {
   type Appearance,
   type BaseHitEvent,
   type FireEvent,
+  type ChatLogEntry,
   type NpcKind,
   type Vec2,
 } from '../../../shared/src/protocol';
@@ -177,6 +179,10 @@ export class Game {
   private lastBossRound = -1;
   /** ボス弾幕のローテーション位置 */
   private bossScriptIdx = 0;
+  /** 途中参加者へ引き継ぐ直近チャット発言 (時刻順) */
+  private readonly chatHistory: ChatLogEntry[] = [];
+  /** 表示・履歴の重複排除 (履歴同期で同じ発言が複数ピアから届く) */
+  private readonly seenChatIds = new Set<string>();
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -309,7 +315,14 @@ export class Game {
 
     this.chat = new ChatUI(container);
     this.chat.onSend = (text) => {
-      this.room.broadcastChat(text);
+      const entry: ChatLogEntry = {
+        id: crypto.randomUUID(),
+        n: this.name,
+        t: text,
+        at: Date.now(),
+      };
+      this.recordChat(entry);
+      this.room.broadcastChat(text, entry.id, entry.at);
       this.chat.addLine(this.name, text);
     };
 
@@ -365,6 +378,8 @@ export class Game {
         this.baseDefense.snapshot(),
         this.baseDefense.lit(),
       );
+      // 新規参加者が会話の流れを追えるよう、直近の発言ログを引き継ぐ
+      this.room.sendChatLogTo(id, [...this.chatHistory]);
     };
     this.room.onState = (id, state) => {
       const now = performance.now();
@@ -463,11 +478,26 @@ export class Game {
       const adjusted = normalizeBaseSnapshotTimes(hits, Date.now(), skew, sentAt);
       this.baseDefense.mergeSnapshot(adjusted, lit);
     };
-    this.room.onChat = (id, text) => {
+    this.room.onChat = (id, text, msgId, at) => {
       const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
+      const stamp = at ?? Date.now();
+      // 旧クライアントの発言 (id なし) は送信元+時刻窓+本文で合成IDを作り、
+      // 履歴同期との重複表示を防ぐ
+      const entryId =
+        msgId ?? `${id.slice(0, 8)}|${Math.floor(stamp / 5000)}|${text.slice(0, 24)}`;
+      if (!this.recordChat({ id: entryId, n: name, t: text, at: stamp })) return;
       // リモートの通常発言を「* 」だけでシステム通知扱いにしない。
       this.chat.addLine(name, text);
       this.audio.playChat();
+    };
+    this.room.onChatLog = (_id, entries) => {
+      const fresh = entries
+        .filter((entry) => !this.seenChatIds.has(entry.id))
+        .sort((a, b) => a.at - b.at);
+      for (const entry of fresh) this.recordChat(entry);
+      this.chat.addHistoryLines(
+        fresh.map((entry) => ({ name: entry.n, text: entry.t })),
+      );
     };
     this.room.onPeerLeave = (id) => {
       const name = this.remotes.get(id)?.sim.name;
@@ -893,6 +923,24 @@ export class Game {
     return true;
   }
 
+  /** チャット発言を履歴へ記録する。既知IDなら false (重複) */
+  private recordChat(entry: ChatLogEntry): boolean {
+    if (this.seenChatIds.has(entry.id)) return false;
+    this.seenChatIds.add(entry.id);
+    if (this.seenChatIds.size > 500) {
+      const it = this.seenChatIds.values();
+      for (let i = 0; i < 250; i++) {
+        this.seenChatIds.delete(it.next().value as string);
+      }
+    }
+    this.chatHistory.push(entry);
+    this.chatHistory.sort((a, b) => a.at - b.at);
+    if (this.chatHistory.length > CHAT_LOG_MAX) {
+      this.chatHistory.splice(0, this.chatHistory.length - CHAT_LOG_MAX);
+    }
+    return true;
+  }
+
   /** ボス撃破の告知 (担当・観測どちらの経路でも一度だけ) */
   private onBossDefeated(): void {
     const round = waveStateAt(this.roomNow()).round;
@@ -1086,8 +1134,15 @@ export class Game {
         (isNpcId(killerId) ? 'ウィスプ' : this.remotes.get(killerId)?.sim.name) ??
         killerId.slice(0, 8);
       const announce = `* ${this.name} は ${killer} に撃墜されました`;
+      const entry: ChatLogEntry = {
+        id: crypto.randomUUID(),
+        n: '',
+        t: announce,
+        at: Date.now(),
+      };
+      this.recordChat(entry);
       this.chat.addLine('', announce, true);
-      this.room.broadcastChat(announce);
+      this.room.broadcastChat(announce, entry.id, entry.at);
       const spawn = pickSpawnPoint();
       this.player.respawn(spawn.x, spawn.y, now);
       this.playerView.sync(this.player.pos.x, this.player.pos.y, this.player.heading);

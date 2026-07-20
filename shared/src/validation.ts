@@ -5,6 +5,7 @@ import {
   FIELD_SIZE,
   MAX_HP,
   MAX_ID_TOKEN_LEN,
+  CHAT_LOG_MAX,
   MAX_FIRE_BATCH,
   MAX_PEERS,
   NPC_KINDS,
@@ -14,6 +15,7 @@ import {
   type BaseHitEvent,
   type BulletCollisionEvent,
   type BulletRef,
+  type ChatLogEntry,
   type FireEvent,
   type NostrContent,
   type NpcKind,
@@ -263,6 +265,15 @@ function parseBulletCollision(value: unknown): BulletCollisionEvent | null {
   return { id: v.id, a, b, da: v.da, db: v.db };
 }
 
+function parseChatLogEntry(value: unknown): ChatLogEntry | null {
+  const v = record(value);
+  if (!v || !shortString(v.id, 64) || v.id.length === 0) return null;
+  if (!shortString(v.n, 32)) return null;
+  if (!shortString(v.t, 200) || v.t.trim().length === 0) return null;
+  if (!finite(v.at, 0, 10_000_000_000_000)) return null;
+  return { id: v.id, n: v.n, t: v.t, at: v.at };
+}
+
 function parseBaseHit(value: unknown): BaseHitEvent | null {
   const v = record(value);
   if (!v || !shortString(v.id, MAX_SIGNAL_ID_LEN) || v.id.length === 0) return null;
@@ -328,10 +339,24 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
           }
         : null;
     }
-    case 'chat':
-      return shortString(v.text, 200) && v.text.trim().length > 0
-        ? { type: 'chat', text: v.text }
+    case 'chat': {
+      if (!shortString(v.text, 200) || v.text.trim().length === 0) return null;
+      if (v.id !== undefined && (!shortString(v.id, 64) || v.id.length === 0)) return null;
+      if (v.at !== undefined && !finite(v.at, 0, 10_000_000_000_000)) return null;
+      return {
+        type: 'chat',
+        text: v.text,
+        ...(v.id === undefined ? {} : { id: v.id as string }),
+        ...(v.at === undefined ? {} : { at: v.at as number }),
+      };
+    }
+    case 'chat-log': {
+      if (!Array.isArray(v.entries) || v.entries.length > CHAT_LOG_MAX) return null;
+      const entries = v.entries.map(parseChatLogEntry);
+      return entries.every((entry): entry is ChatLogEntry => entry !== null)
+        ? { type: 'chat-log', entries }
         : null;
+    }
     case 'profile':
       return shortString(v.token, MAX_ID_TOKEN_LEN) && JWT_RE.test(v.token)
         ? { type: 'profile', token: v.token }

@@ -95,6 +95,35 @@ describe('protocol validation', () => {
     })).toBeNull();
   });
 
+  it('validates chat ids and chat-log history batches', () => {
+    expect(parseReliableMessage({ type: 'chat', text: 'hi' }))
+      .toMatchObject({ type: 'chat', text: 'hi' });
+    expect(
+      parseReliableMessage({ type: 'chat', text: 'hi', id: 'msg-1', at: 1_000 }),
+    ).toMatchObject({ type: 'chat', id: 'msg-1', at: 1_000 });
+    expect(parseReliableMessage({ type: 'chat', text: 'hi', id: '' })).toBeNull();
+
+    const entry = { id: 'msg-1', n: 'alice', t: 'hello', at: 1_000 };
+    expect(parseReliableMessage({ type: 'chat-log', entries: [entry] }))
+      .toMatchObject({ type: 'chat-log', entries: [entry] });
+    // システム通知 (名前なし) も履歴に載せられる
+    expect(
+      parseReliableMessage({
+        type: 'chat-log',
+        entries: [{ ...entry, n: '' }],
+      }),
+    ).not.toBeNull();
+    expect(
+      parseReliableMessage({
+        type: 'chat-log',
+        entries: Array.from({ length: 31 }, (_, i) => ({ ...entry, id: `m${i}` })),
+      }),
+    ).toBeNull();
+    expect(
+      parseReliableMessage({ type: 'chat-log', entries: [{ ...entry, t: ' ' }] }),
+    ).toBeNull();
+  });
+
   it('validates collision damage messages and bullet ownership', () => {
     const npcId = `${peerId}:npc:0`;
     const message = {

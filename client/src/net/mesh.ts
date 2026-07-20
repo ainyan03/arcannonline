@@ -14,6 +14,7 @@ import {
   PROTO_VERSION,
   STALE_PRESENCE_MS,
   type BaseHitEvent,
+  type ChatLogEntry,
   type FireEvent,
   type BulletCollisionEvent,
   type NostrContent,
@@ -67,7 +68,9 @@ export class Mesh {
   onState?: (id: string, state: StatePayload) => void;
   onNpcs?: (id: string, states: NpcStatePayload[]) => void;
   onFire?: (id: string, ev: FireEvent) => void;
-  onChat?: (id: string, text: string) => void;
+  onChat?: (id: string, text: string, msgId?: string, at?: number) => void;
+  /** 途中参加時に既存ピアから届く直近チャット履歴 */
+  onChatLog?: (id: string, entries: ChatLogEntry[]) => void;
   onBulletKill?: (fireId: string, spawnIdx: number) => void;
   onBulletCollision?: (id: string, ev: BulletCollisionEvent) => void;
   onBaseHit?: (id: string, ev: BaseHitEvent) => void;
@@ -166,10 +169,17 @@ export class Mesh {
     }
   }
 
-  broadcastChat(text: string): void {
+  broadcastChat(text: string, id?: string, at?: number): void {
     for (const e of this.peers.values()) {
-      if (e.peer.isOpen) e.peer.sendReliable({ type: 'chat', text });
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'chat', text, id, at });
     }
+  }
+
+  /** 直近チャット履歴を特定ピアだけへ送る (新規開通時の引き継ぎ用) */
+  sendChatLogTo(id: string, entries: ChatLogEntry[]): void {
+    if (entries.length === 0) return;
+    const e = this.peers.get(id);
+    if (e?.peer.isOpen) e.peer.sendReliable({ type: 'chat-log', entries });
   }
 
   broadcastBulletKill(fireId: string, spawnIdx: number): void {
@@ -426,7 +436,10 @@ export class Mesh {
         this.onBaseSync?.(fromId, msg.hits, msg.lit, msg.at);
         break;
       case 'chat':
-        this.onChat?.(fromId, String(msg.text).slice(0, 200));
+        this.onChat?.(fromId, String(msg.text).slice(0, 200), msg.id, msg.at);
+        break;
+      case 'chat-log':
+        this.onChatLog?.(fromId, msg.entries);
         break;
       case 'profile':
         this.onProfile?.(fromId, msg.token);

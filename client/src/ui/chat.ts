@@ -1,4 +1,5 @@
-const MAX_LINES = 8;
+/** 保持する最大行数。表示領域は CSS の max-height でスクロールになる */
+const MAX_LINES = 200;
 
 /**
  * チャット。入力枠は画面最下部に常設し、自由に編集して Enter (確定) で送信する。
@@ -83,6 +84,32 @@ export class ChatUI {
   }
 
   addLine(name: string, text: string, system = false): void {
+    const stick = this.isNearBottom();
+    this.log.appendChild(this.makeLine(name, text, system));
+    this.trim();
+    // ユーザーが過去ログへスクロール中は追従せず、読んでいる位置を保つ
+    if (stick) this.scrollToBottom();
+  }
+
+  /**
+   * 接続時に受け取った過去ログを、現在の行より前 (上) へ時系列順に挿入する。
+   * 呼び出し側で時刻順に整列済みであること
+   */
+  addHistoryLines(lines: readonly { name: string; text: string }[]): void {
+    if (lines.length === 0) return;
+    const stick = this.isNearBottom();
+    const fragment = document.createDocumentFragment();
+    for (const { name, text } of lines) {
+      const line = this.makeLine(name, text, name === '');
+      line.classList.add('past');
+      fragment.appendChild(line);
+    }
+    this.log.insertBefore(fragment, this.log.firstChild);
+    this.trim();
+    if (stick) this.scrollToBottom();
+  }
+
+  private makeLine(name: string, text: string, system: boolean): HTMLElement {
     const line = document.createElement('div');
     if (system) {
       line.className = 'sys';
@@ -93,7 +120,20 @@ export class ChatUI {
       nameSpan.textContent = `${name}: `;
       line.append(nameSpan, document.createTextNode(text));
     }
-    this.log.appendChild(line);
+    return line;
+  }
+
+  private isNearBottom(): boolean {
+    return (
+      this.log.scrollTop + this.log.clientHeight >= this.log.scrollHeight - 12
+    );
+  }
+
+  private scrollToBottom(): void {
+    this.log.scrollTop = this.log.scrollHeight;
+  }
+
+  private trim(): void {
     while (this.log.children.length > MAX_LINES) {
       this.log.firstChild?.remove();
     }

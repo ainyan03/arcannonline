@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 20;
+export const PROTO_VERSION = 21;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -66,6 +66,17 @@ export const AUTO_SHOT_COOLDOWN_MS = 100;
 export const AUTO_SHOT_RANGE = 40;
 /** 1つのReliableメッセージへまとめる通常弾イベント上限 */
 export const MAX_FIRE_BATCH = 8;
+
+/** 途中参加者へ引き継ぐ直近チャット発言数の上限 */
+export const CHAT_LOG_MAX = 30;
+
+/** チャット履歴の1発言。n は発言時点の表示名 (システム通知は空文字) */
+export interface ChatLogEntry {
+  id: string;
+  n: string;
+  t: string;
+  at: number;
+}
 
 /** 発射時に弾へ引き継ぐ自機速度の割合 */
 export const BULLET_INHERIT_VELOCITY = 0.5;
@@ -336,7 +347,10 @@ export type ReliableMessage =
   | { type: 'base-hit'; ev: BaseHitEvent }
   /** 途中参加者向けの拠点履歴。lit はヒステリシス状態の復元に使う */
   | { type: 'base-sync'; hits: BaseHitEvent[]; lit?: boolean; at?: number }
-  | { type: 'chat'; text: string }
+  /** id/at は履歴同期の重複排除用 (旧クライアントは省略する) */
+  | { type: 'chat'; text: string; id?: string; at?: number }
+  /** 途中参加者向けの直近チャット履歴。接続確立時に既存ピアが直接送る */
+  | { type: 'chat-log'; entries: ChatLogEntry[] }
   /**
    * GitHub 認証済みプロフィールの申告 (Firebase ID トークン)。受信側は
    * Google の公開鍵で署名を独立検証し、認証バッジとアバターを表示する。

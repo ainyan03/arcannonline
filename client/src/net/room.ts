@@ -4,6 +4,7 @@ import {
   ROOM_NAME,
   type BaseHitEvent,
   type BulletCollisionEvent,
+  type ChatLogEntry,
   type FireEvent,
   type NpcStatePayload,
   type StatePayload,
@@ -52,8 +53,17 @@ export class GameRoom {
     this.mesh.onFire = fn;
   }
 
-  set onChat(fn: ((id: string, text: string) => void) | undefined) {
+  set onChat(
+    fn:
+      | ((id: string, text: string, msgId?: string, at?: number) => void)
+      | undefined,
+  ) {
     this.mesh.onChat = fn;
+  }
+
+  /** 途中参加時に既存ピアから届く直近チャット履歴 */
+  set onChatLog(fn: ((id: string, entries: ChatLogEntry[]) => void) | undefined) {
+    this.mesh.onChatLog = fn;
   }
 
   set onBulletKill(
@@ -120,8 +130,13 @@ export class GameRoom {
     this.mesh.broadcastAutoFire(ev);
   }
 
-  broadcastChat(text: string): void {
-    this.mesh.broadcastChat(text);
+  broadcastChat(text: string, id?: string, at?: number): void {
+    this.mesh.broadcastChat(text, id, at);
+  }
+
+  /** 直近チャット履歴を特定ピアだけへ送る (新規開通時の引き継ぎ用) */
+  sendChatLogTo(id: string, entries: ChatLogEntry[]): void {
+    this.mesh.sendChatLogTo(id, entries);
   }
 
   broadcastBulletKill(fireId: string, spawnIdx: number): void {
