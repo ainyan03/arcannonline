@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { LocalPlayerSim } from '../client/src/sim/local-player';
-import { PLAYER_SPEED, type Appearance } from '../shared/src/protocol';
+import {
+  PLAYER_SPEED,
+  TRAIL_BOOST_MUL,
+  type Appearance,
+} from '../shared/src/protocol';
 import {
   CLASS_MOVEMENTS,
   CLASS_SHOTS,
@@ -27,7 +31,8 @@ describe('player classes', () => {
     expect(CLASS_MOVEMENTS).toHaveLength(4);
     expect(classMovementFor(undefined)).toBe(CLASS_MOVEMENTS[0]);
     expect(classMovementFor(9)).toBe(CLASS_MOVEMENTS[0]);
-    expect(PLAYER_SPEED_MAX).toBe(PLAYER_SPEED * 1.25);
+    // クラス最速 (箒 1.25倍) × トレイルブースト (1.3倍) が検証上限
+    expect(PLAYER_SPEED_MAX).toBeCloseTo(PLAYER_SPEED * 1.25 * TRAIL_BOOST_MUL, 5);
   });
 
   it('the broom witch cruises without input and cannot stop', () => {
@@ -84,6 +89,13 @@ describe('player classes', () => {
     // 箒: 巡航 (0.6×基準) は steady、加速中は moving
     expect(shotScriptIdFor(1, PLAYER_SPEED * 0.6)).toBe('shot-broom-steady');
     expect(shotScriptIdFor(1, PLAYER_SPEED * 1.2)).toBe('shot-broom-moving');
+  });
+
+  it('boost raises the speed cap temporarily (stardust trail)', () => {
+    const star = new LocalPlayerSim({ ...CLEAR }, 's', appearance(0));
+    star.boost(999);
+    for (let i = 0; i < 300; i++) star.update(DT, { x: 1, y: 0 });
+    expect(speedOf(star)).toBeGreaterThan(PLAYER_SPEED * 1.2);
   });
 
   it('the moon mage is slower than base and the star witch can stop', () => {

@@ -6,6 +6,7 @@ import {
   INVULN_MS,
   MAX_HP,
   PLAYER_SPEED,
+  TRAIL_BOOST_MUL,
   type Appearance,
   type StatePayload,
   type Vec2,
@@ -49,6 +50,8 @@ export class LocalPlayerSim {
   private target: Vec2 | null = null;
   /** クラス別の移動特性 (見た目プリセットから決まる) */
   private readonly movement: ClassMovement;
+  /** 一時的な移動速度ブーストの残り時間 (秒)。スターダストトレイル用 */
+  private boostLeft = 0;
 
   constructor(
     spawn: Vec2,
@@ -87,6 +90,11 @@ export class LocalPlayerSim {
     };
   }
 
+  /** 指定秒数のあいだ移動速度を TRAIL_BOOST_MUL 倍にする */
+  boost(durationSec: number): void {
+    this.boostLeft = Math.max(this.boostLeft, durationSec);
+  }
+
   /** エネルギーを消費する。足りなければ消費せず false を返す */
   trySpendEnergy(cost: number): boolean {
     if (this.energy < cost) return false;
@@ -103,8 +111,10 @@ export class LocalPlayerSim {
   update(dt: number, move: Vec2): boolean {
     this.energy = Math.min(this.energy + ENERGY_REGEN_PER_SEC * dt, ENERGY_MAX);
 
-    const maxSpeed = PLAYER_SPEED * this.movement.speedMul;
-    const cruiseSpeed = PLAYER_SPEED * this.movement.cruiseMul;
+    const boostMul = this.boostLeft > 0 ? TRAIL_BOOST_MUL : 1;
+    this.boostLeft = Math.max(0, this.boostLeft - dt);
+    const maxSpeed = PLAYER_SPEED * this.movement.speedMul * boostMul;
+    const cruiseSpeed = PLAYER_SPEED * this.movement.cruiseMul * boostMul;
 
     // 目標速度を決める (入力方向 or タップ地点への到着減速つき追従)
     let targetVx = 0;

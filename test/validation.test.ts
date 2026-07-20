@@ -58,9 +58,9 @@ describe('protocol validation', () => {
       vy: -3,
     });
     expect(parseFireEvent({ ...base, vx: 4 })).toBeNull();
-    // 上限はクラス補正込みの最高速度 (PLAYER_SPEED_MAX = 10)
-    expect(parseFireEvent({ ...base, vx: 9, vy: 0 })).not.toBeNull();
-    expect(parseFireEvent({ ...base, vx: 11, vy: 0 })).toBeNull();
+    // 上限はクラス補正+トレイルブースト込みの最高速度 (PLAYER_SPEED_MAX = 13)
+    expect(parseFireEvent({ ...base, vx: 12, vy: 0 })).not.toBeNull();
+    expect(parseFireEvent({ ...base, vx: 14, vy: 0 })).toBeNull();
     expect(parseFireEvent({
       ...base,
       target: `${peerId}:npc:0`,
@@ -123,6 +123,16 @@ describe('protocol validation', () => {
     ).toBeNull();
     expect(
       parseReliableMessage({ type: 'chat-log', entries: [{ ...entry, t: ' ' }] }),
+    ).toBeNull();
+  });
+
+  it('validates nova events', () => {
+    const ev = { id: 'nova-1', x: 0, y: 0, at: 1_000 };
+    expect(parseReliableMessage({ type: 'nova', ev }))
+      .toMatchObject({ type: 'nova', ev });
+    expect(parseReliableMessage({ type: 'nova', ev: { ...ev, id: '' } })).toBeNull();
+    expect(
+      parseReliableMessage({ type: 'nova', ev: { ...ev, x: 999 } }),
     ).toBeNull();
   });
 

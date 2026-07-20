@@ -1,7 +1,7 @@
 // プレイヤーのクラス (見た目プリセット appearance.s) ごとの特性。
 // 位置・速度は自己申告のため移動特性は完全ローカルで、同期には影響しない。
 // 通信検証の上限 (PLAYER_SPEED_MAX) だけが共有の約束になる。
-import { PLAYER_SPEED } from './protocol';
+import { PLAYER_SPEED, TRAIL_BOOST_MUL } from './protocol';
 
 export interface ClassMovement {
   /** 最高速度 (PLAYER_SPEED 比) */
@@ -31,9 +31,14 @@ export function classMovementFor(styleIndex: number | undefined): ClassMovement 
   return CLASS_MOVEMENTS[styleIndex ?? 0] ?? CLASS_MOVEMENTS[0];
 }
 
-/** クラス補正込みの最高移動速度。発射イベント等の速度検証の上限に使う */
+/**
+ * クラス補正・一時ブースト (スターダストトレイル) 込みの最高移動速度。
+ * 発射イベント等の速度検証の上限に使う
+ */
 export const PLAYER_SPEED_MAX =
-  PLAYER_SPEED * Math.max(...CLASS_MOVEMENTS.map((c) => c.speedMul));
+  PLAYER_SPEED *
+  Math.max(...CLASS_MOVEMENTS.map((c) => c.speedMul)) *
+  TRAIL_BOOST_MUL;
 
 export interface ClassShot {
   /** 通常ショットのクールダウン (ms) */

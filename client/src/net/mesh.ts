@@ -16,6 +16,7 @@ import {
   type BaseHitEvent,
   type ChatLogEntry,
   type MissileEvent,
+  type NovaEvent,
   type FireEvent,
   type BulletCollisionEvent,
   type NostrContent,
@@ -71,6 +72,8 @@ export class Mesh {
   onFire?: (id: string, ev: FireEvent) => void;
   /** 追尾ミサイル (発射時ロック・必中) の発射通知 */
   onMissiles?: (id: string, ev: MissileEvent) => void;
+  /** スターノヴァ (敵弾一掃 + ノックバック衝撃波) の発動通知 */
+  onNova?: (id: string, ev: NovaEvent) => void;
   onChat?: (id: string, text: string, msgId?: string, at?: number) => void;
   /** 途中参加時に既存ピアから届く直近チャット履歴 */
   onChatLog?: (id: string, entries: ChatLogEntry[]) => void;
@@ -175,6 +178,12 @@ export class Mesh {
   broadcastMissiles(ev: MissileEvent): void {
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendReliable({ type: 'missiles', ev });
+    }
+  }
+
+  broadcastNova(ev: NovaEvent): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'nova', ev });
     }
   }
 
@@ -434,6 +443,9 @@ export class Mesh {
         break;
       case 'missiles':
         this.onMissiles?.(fromId, msg.ev);
+        break;
+      case 'nova':
+        this.onNova?.(fromId, msg.ev);
         break;
       case 'bkill':
         this.onBulletKill?.(String(msg.f), Number(msg.i));

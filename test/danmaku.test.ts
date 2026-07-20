@@ -3,9 +3,32 @@ import {
   CLASS_BOMB_SCRIPT_IDS,
   DANMAKU_SCRIPTS,
   NORMAL_SHOT_SCRIPT_SOURCE,
+  TRAIL_SCRIPT_SOURCE,
   bombScriptIdFor,
 } from '../shared/src/danmaku-scripts';
 import { BulletEngine } from '../client/src/sim/danmaku/engine';
+
+describe('stardust trail', () => {
+  it('spawns a stationary long-lived bullet', () => {
+    const engine = new BulletEngine();
+    engine.startScript(
+      TRAIL_SCRIPT_SOURCE,
+      1,
+      () => ({ x: 5, y: 5 }),
+      0,
+      'o'.repeat(64),
+      undefined,
+      0,
+      'trail-1',
+    );
+    engine.tick();
+    expect(engine.aliveCount).toBe(1);
+    const bullet = engine.bullets.find((b) => b.alive);
+    expect(bullet?.vx).toBe(0);
+    expect(bullet?.vy).toBe(0);
+    expect(bullet?.x).toBe(5);
+  });
+});
 
 describe('class bombs', () => {
   it('maps every appearance preset to a bundled script', () => {

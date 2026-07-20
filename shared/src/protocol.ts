@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 28;
+export const PROTO_VERSION = 29;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -271,6 +271,36 @@ export const NPC_KINDS: Record<NpcKind, { name: string; maxHp: number }> = {
   boss: { name: 'アークファントム', maxHp: 3600 },
 };
 
+// --- スターノヴァ (星の魔法少女のボム) --------------------------------------
+// 拡大する衝撃波。範囲内の敵弾を一掃し、敵へダメージ+ノックバックを与える。
+// 弾は全クライアントで決定論的に複製されているため、弾の消去はイベントを
+// 受けた各クライアントがローカルに行うだけで一致する。敵へのダメージと
+// ノックバックは担当ピアが適用する (ミサイルと同じ権威モデル)
+
+export const NOVA_RADIUS = 18;
+export const NOVA_DAMAGE = 12;
+/** ノックバックの初速 (ボスはこの1/4しか動かない) */
+export const NOVA_KNOCKBACK = 16;
+export const NOVA_COST = 100;
+
+export interface NovaEvent {
+  id: string;
+  x: number;
+  y: number;
+  /** 発動時刻 (送信者の時計) */
+  at: number;
+}
+
+// --- スターダストトレイル (箒の魔女のボム) ----------------------------------
+// 一定時間、飛行痕に設置弾の帯を残す。弾は通常の fires バッチで配布される
+// ため追加のメッセージは不要。発動中は移動速度も上がる (ローカル適用)
+
+export const TRAIL_DURATION_MS = 3_000;
+export const TRAIL_INTERVAL_MS = 150;
+export const TRAIL_COST = 80;
+/** 発動中の移動速度倍率 (PLAYER_SPEED_MAX の算出にも使う) */
+export const TRAIL_BOOST_MUL = 1.3;
+
 // --- 魔力灯の聖域 -----------------------------------------------------------
 // 点灯中の魔力灯の周囲は回復エリア (聖域)。ただし攻撃は撃てない。
 // HP・エネルギー・発射はすべて自己申告/自己制御のため同期は不要で、
@@ -430,6 +460,8 @@ export type ReliableMessage =
   | { type: 'fires'; events: FireEvent[] }
   /** 追尾ミサイル (発射時ロック・一定時間後に必中。相殺なし) */
   | { type: 'missiles'; ev: MissileEvent }
+  /** スターノヴァ (敵弾一掃 + ダメージ + ノックバックの衝撃波) */
+  | { type: 'nova'; ev: NovaEvent }
   /**
    * 弾の消滅通知 (被弾で消費した弾など)。弾は「発射イベントID f + その
    * スクリプトが何発目に生成したか i」で全クライアント共通に特定できる

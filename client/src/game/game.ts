@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import {
   DANMAKU_SCRIPTS,
   PLAYER_SHOT_SOURCES,
+  TRAIL_SCRIPT_ID,
   bombScriptIdFor,
 } from '../../../shared/src/danmaku-scripts';
 import {
@@ -30,6 +31,13 @@ import {
   MISSILE_STAGGER_MS,
   MISSILE_TRAVEL_MAX_MS,
   missileTravelMs,
+  NOVA_COST,
+  NOVA_DAMAGE,
+  NOVA_KNOCKBACK,
+  NOVA_RADIUS,
+  TRAIL_COST,
+  TRAIL_DURATION_MS,
+  TRAIL_INTERVAL_MS,
   BASE_HIT_RADIUS,
   BASE_ID,
   BASE_MAX_HP,
@@ -55,6 +63,7 @@ import {
   type ChatLogEntry,
   type NpcKind,
   type MissileEvent,
+  type NovaEvent,
   type NpcStatePayload,
   type Vec2,
 } from '../../../shared/src/protocol';
@@ -107,6 +116,7 @@ import { PlayerView } from '../view3d/player-view';
 import { BaseView } from '../view3d/base-view';
 import { createObstacles } from '../view3d/obstacle-view';
 import { MissileView } from '../view3d/missile-view';
+import { NovaView } from '../view3d/nova-view';
 import { createWorld, type World } from '../view3d/world';
 import { cameraRelativeDir, Keyboard } from './input';
 import { BulletSync } from './bullet-sync';
@@ -136,6 +146,14 @@ const AFK_TIMEOUT_MS = 300_000;
 
 /** ボム発動時の無敵時間 (発動硬直を守る) */
 const BOMB_INVULN_MS = 800;
+
+/** クラス別ボムの表示名 (見た目プリセット順) */
+const BOMB_NAMES = [
+  'スターノヴァ',
+  'スターダストトレイル',
+  'マジックミサイル',
+  'ブルームガーデン',
+] as const;
 
 /**
  * タッチの移動入力を確定するまでの猶予。2本指操作は着地タイミングが
@@ -232,6 +250,11 @@ export class Game {
   private readonly bombScriptId: string;
   /** 追尾ミサイルの視覚エフェクト */
   private readonly missileView: MissileView;
+  /** スターノヴァの視覚エフェクト */
+  private readonly novaView: NovaView;
+  /** スターダストトレイル (箒のボム) の発動終了時刻と次の設置弾時刻 */
+  private trailUntil = 0;
+  private trailNextAt = 0;
   /** 自分担当の標的へ到達予定のミサイル (到達時刻に必中ダメージを確定) */
   private readonly pendingMissileHits: {
     targetId: string;
@@ -289,6 +312,7 @@ export class Game {
     };
     // 1発ずつ飛び出すたびに連射音を鳴らす
     this.missileView.onLaunch = () => this.audio.playAutoFire();
+    this.novaView = new NovaView(this.world.scene);
     this.baseStatus = new BaseStatusUI(container);
     this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP, true);
     this.profiles = new RemoteProfiles((id, profile) => {
@@ -504,6 +528,7 @@ export class Game {
       }
     };
     this.room.onFire = (id, ev) => this.handleRemoteFire(id, ev);
+    this.room.onNova = (id, ev) => this.handleNova(id, ev);
     this.room.onMissiles = (id, ev) => {
       // 伝送遅延ぶんを差し引き、全端末でほぼ同時刻に着弾させる
       const skew = this.remotes.get(id)?.sim.clockSkewMin;
@@ -716,6 +741,7 @@ export class Game {
     this.chat.dispose();
     this.audio.dispose();
     this.missileView.dispose();
+    this.novaView.dispose();
     this.playerView.dispose();
     for (const remote of this.remotes.values()) remote.view.dispose();
     for (const npc of this.localNpcs) npc.view.dispose();
@@ -769,6 +795,7 @@ export class Game {
     // 通常ショット: 索敵距離内かつ自機前方に敵がいれば自動発射
     // (エネルギー消費なし)
     this.autoFire(now);
+    this.emitTrail(now);
 
     this.updateNpcsToNow(now);
     this.tickToNow(now);
@@ -847,6 +874,7 @@ export class Game {
     this.bulletView.sync(this.engine.bullets, this.room.selfId);
     this.particles.update(dt);
     this.missileView.update(now);
+    this.novaView.update(now);
     this.applySanctuary(dt, now);
 
     this.camera.update(
@@ -1280,8 +1308,18 @@ export class Game {
     if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
     // 聖域内は攻撃を撃てない (回復とのトレードオフ)
     if (this.inSanctuary()) return;
-    // 月の魔導士のボムは追尾ミサイル (DSL 弾幕ではない特殊経路)
-    if (this.classStyle === 2) {
+    // 星=ノヴァ / 箒=トレイル / 月=ミサイル は DSL 弾幕ではない特殊経路。
+    // 花 (ブルームガーデン) だけが従来の DSL 経路を使う
+    const style = this.classStyle ?? 0;
+    if (style === 0) {
+      this.fireNova(now);
+      return;
+    }
+    if (style === 1) {
+      this.fireTrail(now);
+      return;
+    }
+    if (style === 2) {
       this.fireMissiles(now);
       return;
     }
@@ -1673,6 +1711,120 @@ export class Game {
     if (profile.picture) view.setAvatarUrl(profile.picture, true);
   }
 
+  /** スターノヴァ発動 (星の魔法少女のボム) */
+  private fireNova(now: number): void {
+    if (!this.player.trySpendEnergy(NOVA_COST)) return;
+    this.lastFireAt = now;
+    this.player.invulnUntil = Math.max(
+      this.player.invulnUntil,
+      now + BOMB_INVULN_MS,
+    );
+    const ev: NovaEvent = {
+      id: crypto.randomUUID(),
+      x: this.player.pos.x,
+      y: this.player.pos.y,
+      at: Date.now(),
+    };
+    this.handleNova(this.room.selfId, ev);
+    this.room.broadcastNova(ev);
+    this.audio.playFire();
+    this.updateHud();
+  }
+
+  /**
+   * スターノヴァの適用 (自分の発動・リモート発動の共通経路)。
+   * 敵弾の一掃は、弾が全クライアントで決定論複製されているため各自が
+   * ローカルに消すだけで一致する。敵へのダメージとノックバックは
+   * 自分担当のNPCにだけ適用する (担当ピア権威)
+   */
+  private handleNova(fromId: string, ev: NovaEvent): void {
+    if (!this.rememberFireId(ev.id)) return;
+    const now = performance.now();
+    this.novaView.burst(ev.x, ev.y, now);
+    this.particles.burst(ev.x, ev.y, new THREE.Color(0xfff2a8), 2.5);
+    this.audio.playHit();
+    // 範囲内の敵弾を一掃する
+    this.engine.forEachNearby(ev.x, ev.y, NOVA_RADIUS, (bullet, index) => {
+      if (!isNpcId(bullet.owner)) return;
+      const dx = bullet.x - ev.x;
+      const dy = bullet.y - ev.y;
+      if (dx * dx + dy * dy > NOVA_RADIUS * NOVA_RADIUS) return;
+      this.engine.killAt(index);
+    });
+    // 自分担当の敵へダメージ + ノックバック
+    for (const npc of this.localNpcs) {
+      if (!npc.sim.alive) continue;
+      const dx = npc.sim.pos.x - ev.x;
+      const dy = npc.sim.pos.y - ev.y;
+      const d = Math.hypot(dx, dy);
+      if (d > NOVA_RADIUS) continue;
+      const died = npc.sim.takeHit(NOVA_DAMAGE, now);
+      if (died) {
+        this.particles.burst(
+          npc.sim.pos.x,
+          npc.sim.pos.y,
+          new THREE.Color(0x9b63da),
+          npc.sim.kind === 'boss' ? 3 : 1.2,
+        );
+        this.audio.playDefeat();
+        if (npc.sim.kind === 'boss') this.onBossDefeated();
+        continue;
+      }
+      npc.sim.provoke(fromId, now);
+      // 中心から外向きへ吹き飛ばす (ボスは質量感を出して1/4)
+      const inv = d > 0.001 ? 1 / d : 0;
+      const knock = NOVA_KNOCKBACK * (npc.sim.kind === 'boss' ? 0.25 : 1);
+      npc.sim.vel.x += dx * inv * knock;
+      npc.sim.vel.y += dy * inv * knock;
+    }
+  }
+
+  /** スターダストトレイル発動 (箒の魔女のボム)。発動中は重ねがけ不可 */
+  private fireTrail(now: number): void {
+    if (now < this.trailUntil) return;
+    if (!this.player.trySpendEnergy(TRAIL_COST)) return;
+    this.lastFireAt = now;
+    this.player.invulnUntil = Math.max(
+      this.player.invulnUntil,
+      now + BOMB_INVULN_MS,
+    );
+    this.trailUntil = now + TRAIL_DURATION_MS;
+    this.trailNextAt = now;
+    // 発動中は加速し、駆け抜けながら設置弾の帯を描く
+    this.player.boost(TRAIL_DURATION_MS / 1000);
+    this.audio.playFire();
+    this.updateHud();
+  }
+
+  /** トレイル発動中、一定間隔で飛行痕に設置弾を置く (fires バッチで配布) */
+  private emitTrail(now: number): void {
+    if (now >= this.trailUntil || now < this.trailNextAt) return;
+    if (this.inSanctuary()) return; // 聖域内は攻撃不能 (時間は進む)
+    this.trailNextAt = now + TRAIL_INTERVAL_MS;
+    const origin = { x: this.player.pos.x, y: this.player.pos.y };
+    const ev: FireEvent = {
+      id: crypto.randomUUID(),
+      script: TRAIL_SCRIPT_ID,
+      seed: (Math.random() * 0x100000000) >>> 0,
+      x: origin.x,
+      y: origin.y,
+      dir: this.player.heading,
+      at: Date.now(),
+    };
+    this.rememberFireId(ev.id);
+    this.engine.startScript(
+      PLAYER_SHOT_SOURCES[TRAIL_SCRIPT_ID],
+      ev.seed,
+      () => origin,
+      ev.dir,
+      this.room.selfId,
+      undefined,
+      0,
+      ev.id,
+    );
+    this.room.broadcastAutoFire(ev);
+  }
+
   /** 追尾ミサイルのボム発射 (月の魔導士)。標的がいなければ撃たない */
   private fireMissiles(now: number): void {
     const targets = planMissileVolley(
@@ -1928,28 +2080,37 @@ export class Game {
   }
 
   private updateHud(): void {
-    const missileBomb = this.classStyle === 2;
-    const scriptName = missileBomb
-      ? 'マジックミサイル'
-      : (DANMAKU_SCRIPTS[this.bombScriptId]?.name ?? this.bombScriptId);
+    const style = this.classStyle ?? 0;
+    const scriptName =
+      BOMB_NAMES[style] ??
+      DANMAKU_SCRIPTS[this.bombScriptId]?.name ??
+      this.bombScriptId;
     this.fireBtn.setScriptName(scriptName);
     // ミサイルは「今撃ったら何発になるか」の実コストを目安に出す
-    const estCost = missileBomb
-      ? (() => {
-          const planned = planMissileVolley(
-            this.missileCandidates(),
-            MISSILE_COUNT,
-            MISSILE_DAMAGE,
-          ).length;
-          return planned === 0 ? null : MISSILE_COST_PER_SHOT * planned;
-        })()
-      : this.estimateSelectedCost();
+    const estCost =
+      style === 0
+        ? NOVA_COST
+        : style === 1
+          ? TRAIL_COST
+          : style === 2
+            ? (() => {
+                const planned = planMissileVolley(
+                  this.missileCandidates(),
+                  MISSILE_COUNT,
+                  MISSILE_DAMAGE,
+                ).length;
+                return planned === 0 ? null : MISSILE_COST_PER_SHOT * planned;
+              })()
+            : this.estimateSelectedCost();
     const sanctuary = this.inSanctuary();
+    // 多段DSLボム (花) だけが実行中ゲートの対象。箒は発動中の重ねがけ不可
+    const dslBomb = style !== 0 && style !== 1 && style !== 2;
     this.fireBtn.setEnabled(
       !sanctuary &&
         estCost !== null &&
         this.player.energy >= estCost &&
-        (missileBomb || !this.engine.ownerHasRun(this.room.selfId)),
+        (!dslBomb || !this.engine.ownerHasRun(this.room.selfId)) &&
+        (style !== 1 || performance.now() >= this.trailUntil),
     );
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +

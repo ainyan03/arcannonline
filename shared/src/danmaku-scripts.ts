@@ -54,9 +54,19 @@ export const CLASS_SHOT_SCRIPTS: Record<string, string> = {
   'shot-flower-moving': `loop (3) { fire(dir + rand(0 - 30, 30), rand(18, 26), 6, 0.2, 0.9); }`,
 };
 
+/**
+ * 箒のボム「スターダストトレイル」が飛行痕へ置いていく設置弾。
+ * 発動中に一定間隔で発射され、通常の fires バッチで配布される
+ */
+export const TRAIL_SCRIPT_ID = 'broom-trail';
+export const TRAIL_SCRIPT_SOURCE = `
+fire(dir, 0, 10, 0.45, 2.5);
+`;
+
 /** 通常ショット系の ID → ソース (受信側の再生用。旧 normal-shot も含む) */
 export const PLAYER_SHOT_SOURCES: Record<string, string> = {
   [NORMAL_SHOT_SCRIPT_ID]: NORMAL_SHOT_SCRIPT_SOURCE,
+  [TRAIL_SCRIPT_ID]: TRAIL_SCRIPT_SOURCE,
   ...CLASS_SHOT_SCRIPTS,
 };
 
@@ -110,21 +120,40 @@ fire(aim, 18, 24, 0.22, 1.6);
 fire(aim + 10, 16, 12, 0.2, 1.6);
 `,
   },
+  garden: {
+    name: 'ブルームガーデン',
+    source: `
+// 花の魔女のボム: 3段階に咲き広がる花弁弾のフィールド。
+// 低速で外へ漂う設置型の面制圧 + 弾消し (敵弾と相殺する)
+let ring = 0;
+loop (3) {
+  let n = 14 + ring * 6;
+  let i = 0;
+  loop (n) {
+    fire(i * 360 / n + ring * 7, 2.2 + ring * 1.4, 4, 0.25, 3.5 - ring * 0.4);
+    i = i + 1;
+  }
+  ring = ring + 1;
+  wait(12);
+}
+`,
+  },
 };
+
 
 export const DEFAULT_SCRIPT_ID = 'ring';
 
 /**
- * 見た目プリセット (appearance.s) ごとの固定ボム (強攻撃)。
- * 選択UIは廃止し、STG のボムの位置付けでクラスの個性とする:
- * 星=全方位リング / 箒=前方ショット (一撃離脱) / 月=狙い3way (自動照準の狙撃) /
- * 花=双腕スパイラル (面制圧)
+ * 見た目プリセット (appearance.s) ごとの固定ボム (強攻撃) の DSL スクリプト。
+ * 星 (スターノヴァ)・箒 (スターダストトレイル)・月 (マジックミサイル) は
+ * DSL を使わない特殊経路のため、この表は 花 (ブルームガーデン) と
+ * 未知プリセットのフォールバックにだけ使われる
  */
 export const CLASS_BOMB_SCRIPT_IDS = [
   'ring',
   'spray',
   'aimshot',
-  'spiral',
+  'garden',
 ] as const;
 
 export function bombScriptIdFor(styleIndex: number | undefined): string {

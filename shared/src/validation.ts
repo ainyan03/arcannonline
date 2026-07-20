@@ -18,6 +18,7 @@ import {
   type ChatLogEntry,
   type FireEvent,
   type MissileEvent,
+  type NovaEvent,
   type NostrContent,
   type NpcKind,
   type NpcStatePayload,
@@ -314,6 +315,13 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
       return events.every((event): event is FireEvent => event !== null)
         ? { type: 'fires', events }
         : null;
+    }
+    case 'nova': {
+      const ev = record(v.ev);
+      if (!ev || !shortString(ev.id, MAX_SIGNAL_ID_LEN) || ev.id.length === 0) return null;
+      if (!finite(ev.x, -FIELD_SIZE, FIELD_SIZE) || !finite(ev.y, -FIELD_SIZE, FIELD_SIZE)) return null;
+      if (!finite(ev.at, 0, 10_000_000_000_000)) return null;
+      return { type: 'nova', ev: { id: ev.id, x: ev.x, y: ev.y, at: ev.at } };
     }
     case 'missiles': {
       const ev = record(v.ev);

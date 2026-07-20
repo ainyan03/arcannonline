@@ -6,6 +6,7 @@ import {
   type BulletCollisionEvent,
   type ChatLogEntry,
   type MissileEvent,
+  type NovaEvent,
   type FireEvent,
   type NpcStatePayload,
   type StatePayload,
@@ -57,6 +58,11 @@ export class GameRoom {
   /** 追尾ミサイル (発射時ロック・必中) の発射通知 */
   set onMissiles(fn: ((id: string, ev: MissileEvent) => void) | undefined) {
     this.mesh.onMissiles = fn;
+  }
+
+  /** スターノヴァ (敵弾一掃 + ノックバック衝撃波) の発動通知 */
+  set onNova(fn: ((id: string, ev: NovaEvent) => void) | undefined) {
+    this.mesh.onNova = fn;
   }
 
   set onChat(
@@ -134,6 +140,10 @@ export class GameRoom {
 
   broadcastMissiles(ev: MissileEvent): void {
     this.mesh.broadcastMissiles(ev);
+  }
+
+  broadcastNova(ev: NovaEvent): void {
+    this.mesh.broadcastNova(ev);
   }
 
   broadcastAutoFire(ev: FireEvent): void {
