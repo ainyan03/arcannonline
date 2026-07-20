@@ -26,6 +26,7 @@ export class PlayerView {
   private readonly flashMats: THREE.MeshLambertMaterial[] = [];
   private readonly flightPhase: number;
   private readonly label: NameLabel;
+  private avatarRevision = 0;
   private flashing = false;
 
   constructor(name: string, appearance?: Appearance, idSeed?: string) {
@@ -98,10 +99,19 @@ export class PlayerView {
    * 読み込み失敗時は identicon のまま (何もしない)。
    */
   setAvatarUrl(url: string, verified: boolean): void {
+    const revision = ++this.avatarRevision;
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => this.label.setAvatar(img, verified);
+    img.onload = () => {
+      if (revision === this.avatarRevision) this.label.setAvatar(img, verified);
+    };
     img.src = url;
+  }
+
+  clearVerifiedProfile(name: string): void {
+    this.avatarRevision++;
+    this.label.setName(name);
+    this.label.clearAvatar();
   }
 
   sync(x: number, y: number, heading: number, visible = true): void {

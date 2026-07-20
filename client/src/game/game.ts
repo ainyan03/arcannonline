@@ -28,11 +28,8 @@ import {
 } from '../../../shared/src/protocol';
 import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
 import { currentAccount, onAccountChange } from '../auth/github';
-import { FIREBASE_PROJECT_ID } from '../auth/firebase-config';
-import {
-  verifyFirebaseToken,
-  type VerifiedProfile,
-} from '../auth/verify-token';
+import { RemoteProfiles } from '../auth/remote-profiles';
+import type { VerifiedProfile } from '../auth/verify-token';
 import { GameAudio } from '../audio/game-audio';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
@@ -61,6 +58,7 @@ import { Particles } from '../view3d/particles';
 import { PlayerView } from '../view3d/player-view';
 import { createWorld, type World } from '../view3d/world';
 import { cameraRelativeDir, Keyboard } from './input';
+import { BulletSync } from './bullet-sync';
 
 const SPAWN_RANGE = 30;
 
@@ -126,14 +124,8 @@ export class Game {
   private readonly rayTmp = new THREE.Vector3();
   private readonly markerTargets = new Map<string, MarkerTarget>();
   private readonly seenFireIds = new Set<string>();
-  /** ピアごとの最後に受理した profile トークン (再検証の抑止) */
-  private readonly profileTokenByPeer = new Map<string, string>();
-  /**
-   * ピアごとの検証済みプロフィールのキャッシュ。リモート表示は無通信で
-   * 一時除去→再作成されるため、消費型でなく保持し続けて再作成時にも適用する
-   * (ピアのメッシュ離脱時に破棄。再接続時は相手が profile を再送してくる)
-   */
-  private readonly verifiedProfiles = new Map<string, VerifiedProfile>();
+  private readonly bulletSync: BulletSync;
+  private readonly profiles: RemoteProfiles;
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -171,6 +163,11 @@ export class Game {
   private readonly editor: ScriptEditorUI;
   private readonly fireBtn: FireButtonUI;
   private customSource: string | null = null;
+  private accountUnsubscribe: () => void = () => {};
+  private animationFrameId = 0;
+  private readonly intervalIds: number[] = [];
+  private readonly windowDisposers: Array<() => void> = [];
+  private disposed = false;
 
   constructor(
     container: HTMLElement,
@@ -181,6 +178,12 @@ export class Game {
     // 参加ボタンのユーザー操作中に初期化し、ブラウザの自動再生制限を解除する。
     void this.audio.unlock();
     this.world = createWorld(container);
+    this.profiles = new RemoteProfiles((id, profile) => {
+      const remote = this.remotes.get(id);
+      if (!remote) return;
+      if (profile) this.applyVerifiedProfile(remote.view, profile);
+      else remote.view.clearVerifiedProfile(remote.sim.name);
+    });
     this.camera = new FollowCamera(this.world.renderer.domElement);
     this.bulletView = new BulletView(this.world.scene, (owner) => {
       if (isNpcId(owner)) return { color: '#9b63da', name: 'ウィスプ' };
@@ -228,7 +231,7 @@ export class Game {
     leaveBtn.textContent = '入り直す';
     leaveBtn.addEventListener('click', () => {
       sessionStorage.removeItem('arcn-autojoin');
-      this.room.leave();
+      this.dispose();
       location.reload();
     });
     container.appendChild(leaveBtn);
@@ -299,6 +302,7 @@ export class Game {
     this.world.scene.add(this.targetRing);
 
     this.room = new GameRoom(privkey);
+    this.bulletSync = new BulletSync(this.engine, this.room);
     // 自機の identicon シード (= ピアID) は room 生成後に判明するため後付け
     this.playerView.setIdSeed(this.room.selfId);
     const npcNow = performance.now();
@@ -331,7 +335,7 @@ export class Game {
         this.world.scene.add(remote.view.object);
         // 検証済みプロフィールがあれば適用する (profile が state より先に
         // 届いた場合と、無通信で一時除去された表示の再作成時の両方をカバー)
-        const profile = this.verifiedProfiles.get(id);
+        const profile = this.profiles.get(id);
         if (profile) this.applyVerifiedProfile(remote.view, profile);
         this.chat.addLine('', `* ${state.n} が参加しました`, true);
         this.audio.playJoin();
@@ -400,36 +404,41 @@ export class Game {
       this.removeRemoteNpcsOwnedBy(id);
       // メッシュから居なくなったピアの認証キャッシュは破棄する
       // (再接続時は接続確立の契機で相手が profile を送り直してくる)
-      this.verifiedProfiles.delete(id);
-      this.profileTokenByPeer.delete(id);
+      this.profiles.remove(id);
+      this.bulletSync.removePeer(id);
       this.updateHud();
     };
     // 自分より新しいバージョンを申告するピアが居たらアップデートを促す
     const updateBanner = new UpdateBannerUI(container);
-    this.room.onPeerVersion = (_id, version) => {
+    this.room.onPeerVersion = (id, version) => {
+      this.bulletSync.notePeerVersion(id, version);
       if (version > PROTO_VERSION) updateBanner.show();
     };
 
     // GitHub 認証: 自分のアバターを反映し、ログイン/トークン更新のたびに
     // ピアへ再配布する。受信側 (onProfile) は署名を独立検証してから表示する
-    this.room.onProfile = (id, token) => this.handleProfile(id, token);
+    this.room.onProfile = (id, token) => this.profiles.receive(id, token);
     const applyOwnAccount = () => {
       const acc = currentAccount();
-      if (!acc) return;
+      if (!acc || acc.boundPeerId !== this.room.selfId) {
+        this.playerView.clearVerifiedProfile(this.name);
+        if (this.room.peerCount > 0) this.room.broadcastProfileClear();
+        return;
+      }
       // 頭上ラベルは検証済みアカウント名 (フル) に差し替える
       this.playerView.setName(acc.name);
       if (acc.picture) this.playerView.setAvatarUrl(acc.picture, true);
       this.sendProfileNow();
     };
     applyOwnAccount();
-    onAccountChange(applyOwnAccount);
+    this.accountUnsubscribe = onAccountChange(applyOwnAccount);
 
     this.setupInput(container);
 
     // AFK 判定用の入力検知。チャット入力欄は keydown を stopPropagation
     // するため、capture 段階で拾ってあらゆる操作を活動として数える
-    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
-      window.addEventListener(
+    for (const type of ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const) {
+      this.listenWindow(
         type,
         () => {
           this.lastInputAt = performance.now();
@@ -438,17 +447,17 @@ export class Game {
       );
     }
 
-    window.addEventListener('resize', () => {
+    this.listenWindow('resize', () => {
       this.world.renderer.setSize(window.innerWidth, window.innerHeight);
       this.camera.resize(window.innerWidth / window.innerHeight);
     });
     // beforeunload はモバイルで発火しないことが多い。pagehide なら
     // 画面ロックやタブ切替による破棄・凍結時にも比較的確実に呼ばれるため、
     // ここで退室してゴースト (残留ピア情報) を残さないようにする
-    window.addEventListener('pagehide', () => this.room.leave());
+    this.listenWindow('pagehide', () => this.dispose());
     // bfcache から復元された場合、凍結中に WebRTC もリレー接続も死んでいる
     // ので、再読み込みしてクリーンに再参加させる (自動参加で即復帰する)
-    window.addEventListener('pageshow', (e) => {
+    this.listenWindow('pageshow', (e) => {
       if (e.persisted) location.reload();
     });
 
@@ -460,17 +469,19 @@ export class Game {
   }
 
   start(): void {
+    if (this.disposed || this.animationFrameId !== 0) return;
     this.lastFrame = performance.now();
     const loop = (now: number) => {
+      if (this.disposed) return;
       this.frame(now);
-      requestAnimationFrame(loop);
+      this.animationFrameId = requestAnimationFrame(loop);
     };
-    requestAnimationFrame(loop);
+    this.animationFrameId = requestAnimationFrame(loop);
 
     // 状態送信は rAF から独立させる。バックグラウンドタブでは rAF が完全停止
     // するが、setInterval は (~1Hz に間引かれつつも) 動き続けるため、
     // 裏に回ったプレイヤーも相手画面から消えない。
-    window.setInterval(() => {
+    this.intervalIds.push(window.setInterval(() => {
       const now = performance.now();
       this.updateNpcsToNow(now);
       this.sendStateNow();
@@ -482,17 +493,17 @@ export class Game {
       this.checkNpcHits(now);
       this.checkHits(now);
       this.updateHud();
-    }, STATE_INTERVAL_MS);
+    }, STATE_INTERVAL_MS));
 
     // 回復ウォッチドッグ: ピアを長時間発見できない場合は回復を要求する。
     // (間隔は指数バックオフで最大5分まで延ばし、リレーへの負荷増を防ぐ)
-    window.setInterval(() => {
+    this.intervalIds.push(window.setInterval(() => {
       const now = performance.now();
       // 長時間入力がなければ AFK として退室し、参加画面へ戻る
       // (放置タブのキャラが他画面に残り続けるのを防ぐ)
       if (now - this.lastInputAt > AFK_TIMEOUT_MS) {
         sessionStorage.removeItem('arcn-autojoin');
-        this.room.leave();
+        this.dispose();
         location.reload();
         return;
       }
@@ -506,6 +517,7 @@ export class Game {
       for (const [id, npc] of this.remoteNpcs) {
         if (now - npc.sim.lastSeenAt > STALE_REMOTE_MS) this.removeRemoteNpc(id);
       }
+      this.profiles.expire();
 
       if (this.room.peerCount > 0) {
         this.lastPeerAt = now;
@@ -517,7 +529,34 @@ export class Game {
         this.rejoinBackoffMs = Math.min(this.rejoinBackoffMs * 2, 300_000);
         this.room.rejoin();
       }
-    }, 5_000);
+    }, 5_000));
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.animationFrameId !== 0) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = 0;
+    }
+    for (const id of this.intervalIds) window.clearInterval(id);
+    this.intervalIds.length = 0;
+    for (const remove of this.windowDisposers.splice(0)) remove();
+    this.accountUnsubscribe();
+    this.input.dispose();
+    this.audio.dispose();
+    this.room.leave();
+  }
+
+  private listenWindow<K extends keyof WindowEventMap>(
+    type: K,
+    listener: (event: WindowEventMap[K]) => void,
+    options?: AddEventListenerOptions | boolean,
+  ): void {
+    window.addEventListener(type, listener, options);
+    this.windowDisposers.push(() =>
+      window.removeEventListener(type, listener, options),
+    );
   }
 
   private frame(now: number): void {
@@ -697,33 +736,38 @@ export class Game {
   }
 
   private checkNpcHits(now: number): void {
-    const bullets = this.engine.bullets;
     for (const npc of this.localNpcs) {
       if (!npc.sim.alive) continue;
-      for (let i = 0; i < bullets.length; i++) {
-        const bullet = bullets[i];
-        // 共通敵同士ではダメージを与えない。
-        if (!bullet.alive || isNpcId(bullet.owner)) continue;
-        const dx = bullet.x - npc.sim.pos.x;
-        const dy = bullet.y - npc.sim.pos.y;
-        const rr = bullet.radius + NPC_HIT_RADIUS;
-        if (dx * dx + dy * dy > rr * rr) continue;
-        const died = npc.sim.takeHit(bullet.dur, now);
-        this.engine.killAt(i);
-        this.room.broadcastBulletKill(bullet.fireId, bullet.spawnIdx);
-        this.audio.playHit();
-        if (died) {
-          this.particles.burst(
-            npc.sim.pos.x,
-            npc.sim.pos.y,
-            new THREE.Color(0x9b63da),
-            1.2,
-          );
-          this.audio.playDefeat();
-          if (this.targetId === npc.sim.id) this.targetId = null;
-          break;
-        }
-      }
+      let defeated = false;
+      this.engine.forEachNearby(
+        npc.sim.pos.x,
+        npc.sim.pos.y,
+        NPC_HIT_RADIUS,
+        (bullet, index) => {
+          if (defeated) return;
+          // 共通敵同士ではダメージを与えない。
+          if (isNpcId(bullet.owner)) return;
+          const dx = bullet.x - npc.sim.pos.x;
+          const dy = bullet.y - npc.sim.pos.y;
+          const rr = bullet.radius + NPC_HIT_RADIUS;
+          if (dx * dx + dy * dy > rr * rr) return;
+          const died = npc.sim.takeHit(bullet.dur, now);
+          this.engine.killAt(index);
+          this.room.broadcastBulletKill(bullet.fireId, bullet.spawnIdx);
+          this.audio.playHit();
+          if (died) {
+            defeated = true;
+            this.particles.burst(
+              npc.sim.pos.x,
+              npc.sim.pos.y,
+              new THREE.Color(0x9b63da),
+              1.2,
+            );
+            this.audio.playDefeat();
+            if (this.targetId === npc.sim.id) this.targetId = null;
+          }
+        },
+      );
     }
   }
 
@@ -734,20 +778,19 @@ export class Game {
     const px = this.player.pos.x;
     const py = this.player.pos.y;
     const pr = 0.7; // 自機の当たり半径
-    const bs = this.engine.bullets;
     let died = false;
     let killerId = '';
-    for (let i = 0; i < bs.length; i++) {
-      const b = bs[i];
+    this.engine.forEachNearby(px, py, pr, (b, index) => {
+      if (died) return;
       // 協力プレイ: ダメージを受けるのは敵 (NPC) の弾のみ。
       // プレイヤー同士はフレンドリーファイアなし (弾はすり抜ける)
-      if (!b.alive || !isNpcId(b.owner)) continue;
+      if (!isNpcId(b.owner)) return;
       const dx = b.x - px;
       const dy = b.y - py;
       const rr = b.radius + pr;
-      if (dx * dx + dy * dy > rr * rr) continue;
+      if (dx * dx + dy * dy > rr * rr) return;
       const dead = this.player.takeHit(b.dur, now);
-      this.engine.killAt(i); // 当たった弾は消費する
+      this.engine.killAt(index); // 当たった弾は消費する
       // 他クライアントにも消滅を通知 (発射イベントID + 生成順で特定)
       this.room.broadcastBulletKill(b.fireId, b.spawnIdx);
       this.selfFlashUntil = now + FLASH_MS;
@@ -755,9 +798,8 @@ export class Game {
       if (dead) {
         died = true;
         killerId = b.owner;
-        break;
       }
-    }
+    });
     if (died) {
       this.audio.playDefeat();
       const killer =
@@ -943,7 +985,7 @@ export class Game {
   // --- 入力 -----------------------------------------------------------------
 
   private setupInput(container: HTMLElement): void {
-    window.addEventListener('keydown', (e) => {
+    this.listenWindow('keydown', (e) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
       if (e.code === 'Space') {
@@ -1168,23 +1210,6 @@ export class Game {
   private sendProfileNow(): void {
     const token = currentAccount()?.token;
     if (token && this.room.peerCount > 0) this.room.broadcastProfile(token);
-  }
-
-  /**
-   * ピアからの profile 申告。トークンの署名・発行元・期限を Google の
-   * 公開鍵でブラウザ内検証し、通った場合のみ認証済みアバターを表示する
-   */
-  private handleProfile(id: string, token: string): void {
-    if (this.profileTokenByPeer.get(id) === token) return;
-    this.profileTokenByPeer.set(id, token);
-    void verifyFirebaseToken(token, FIREBASE_PROJECT_ID).then((profile) => {
-      // 検証中に別トークンが届いていたら古い結果は捨てる
-      if (!profile || this.profileTokenByPeer.get(id) !== token) return;
-      if (!profile.name && !profile.picture) return;
-      this.verifiedProfiles.set(id, profile);
-      const remote = this.remotes.get(id);
-      if (remote) this.applyVerifiedProfile(remote.view, profile);
-    });
   }
 
   /** 検証済みプロフィールをラベルへ反映 (名前はフル表示、アバターはバッジ付き) */

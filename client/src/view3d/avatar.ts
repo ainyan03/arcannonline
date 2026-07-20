@@ -70,6 +70,13 @@ export class NameLabel {
     this.redraw();
   }
 
+  /** 認証表示を解除し、ピアID由来のidenticonへ戻す。 */
+  clearAvatar(): void {
+    this.icon = null;
+    this.verified = false;
+    this.redraw();
+  }
+
   private redraw(): void {
     const ctx = this.canvas.getContext('2d')!;
     ctx.clearRect(0, 0, LABEL_W, LABEL_H);

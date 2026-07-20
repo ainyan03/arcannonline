@@ -12,6 +12,7 @@ import {
   PROTO_VERSION,
   STALE_PRESENCE_MS,
   type FireEvent,
+  type BulletCollisionEvent,
   type NostrContent,
   type NpcStatePayload,
   type ReliableMessage,
@@ -21,6 +22,10 @@ import {
 import type { NostrSignaling } from './nostr';
 import { parseNostrContent } from '../../../shared/src/validation';
 import { Peer } from './peer';
+import {
+  MAX_CONNECTING_PEERS,
+  selectPexDialCandidates,
+} from './admission';
 
 const ENV_SEEN_MAX = 2_000;
 /** プレゼンス即時応答のレート制限 */
@@ -44,8 +49,9 @@ export class Mesh {
   onFire?: (id: string, ev: FireEvent) => void;
   onChat?: (id: string, text: string) => void;
   onBulletKill?: (fireId: string, spawnIdx: number) => void;
+  onBulletCollision?: (id: string, ev: BulletCollisionEvent) => void;
   /** GitHub 認証済みプロフィール (Firebase ID トークン) の申告 */
-  onProfile?: (id: string, token: string) => void;
+  onProfile?: (id: string, token: string | null) => void;
   /** ピアが申告したプロトコルバージョン (プレゼンス/PEX 受信のたびに発火) */
   onPeerVersion?: (id: string, version: number) => void;
 
@@ -56,15 +62,19 @@ export class Mesh {
   private txCount = 0;
   private rxCount = 0;
   private relayedCount = 0;
+  private readonly intervalIds: number[];
+  private left = false;
 
   constructor(private readonly nostr: NostrSignaling) {
     this.selfId = nostr.pubkey;
     nostr.onMessage = (from, content) => this.handleNostr(from, content);
     nostr.onRelayOpen = () => this.publishPresence(true);
 
-    window.setInterval(() => this.publishPresence(false), PRESENCE_INTERVAL_MS);
-    window.setInterval(() => this.sendPex(), PEX_INTERVAL_MS);
-    window.setInterval(() => this.cleanup(), 5_000);
+    this.intervalIds = [
+      window.setInterval(() => this.publishPresence(false), PRESENCE_INTERVAL_MS),
+      window.setInterval(() => this.sendPex(), PEX_INTERVAL_MS),
+      window.setInterval(() => this.cleanup(), 5_000),
+    ];
   }
 
   get openCount(): number {
@@ -74,10 +84,15 @@ export class Mesh {
   }
 
   get stats(): string {
+    let reliableDropped = 0;
+    for (const e of this.peers.values()) {
+      reliableDropped += e.peer.reliableDroppedCount;
+    }
     return (
       `tx: ${this.txCount} rx: ${this.rxCount}` +
       ` link: ${this.openCount}/${this.peers.size}` +
-      (this.relayedCount > 0 ? ` relayed: ${this.relayedCount}` : '')
+      (this.relayedCount > 0 ? ` relayed: ${this.relayedCount}` : '') +
+      (reliableDropped > 0 ? ` reliable-drop: ${reliableDropped}` : '')
     );
   }
 
@@ -115,14 +130,27 @@ export class Mesh {
     }
   }
 
+  broadcastBulletCollision(ev: BulletCollisionEvent): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'bcoll', ev });
+    }
+  }
+
   broadcastProfile(token: string): void {
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendReliable({ type: 'profile', token });
     }
   }
 
+  broadcastProfileClear(): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'profile-clear' });
+    }
+  }
+
   /** 在室を再通知する (ウォッチドッグからの回復要求にも使う) */
   publishPresence(force: boolean): void {
+    if (this.left) return;
     const now = performance.now();
     if (!force && now - this.lastPresenceSentAt < PRESENCE_REPLY_MIN_MS) return;
     this.lastPresenceSentAt = now;
@@ -131,7 +159,10 @@ export class Mesh {
 
   /** 退室を通知し、全接続を閉じる */
   leave(): void {
+    if (this.left) return;
+    this.left = true;
     this.publish({ t: 'bye' });
+    for (const id of this.intervalIds) window.clearInterval(id);
     for (const [id, e] of this.peers) {
       e.peer.close();
       this.peers.delete(id);
@@ -170,17 +201,25 @@ export class Mesh {
   }
 
   /** ピアの存在を認知する (プレゼンス受信・PEX・シグナル受信のすべてが契機) */
-  private notePeer(id: string): void {
-    if (id === this.selfId) return;
+  private notePeer(id: string, allowConnect = true): boolean {
+    if (id === this.selfId) return false;
     const isNew = !this.presenceSeen.has(id);
     this.presenceSeen.set(id, performance.now());
-    if (!this.peers.has(id) && this.peers.size < MAX_PEERS) {
+    let created = false;
+    if (
+      allowConnect &&
+      !this.peers.has(id) &&
+      this.peers.size < MAX_PEERS &&
+      this.connectingCount() < MAX_CONNECTING_PEERS
+    ) {
       this.createPeer(id);
+      created = true;
     }
     if (isNew) {
       // 相手がこちらをまだ知らない可能性があるため即時に在室を返す
       this.publishPresence(false);
     }
+    return created;
   }
 
   private createPeer(id: string): void {
@@ -264,7 +303,17 @@ export class Mesh {
         const entry = this.peers.get(fromId);
         if (entry) entry.known = new Set(msg.peers);
         // PEX による発見: リレーに頼らず新しいピアを知る
-        for (const id of msg.peers) this.notePeer(id);
+        const selected = selectPexDialCandidates(
+          msg.peers,
+          this.selfId,
+          new Set(this.peers.keys()),
+          this.peers.size,
+          this.connectingCount(),
+          MAX_PEERS,
+        );
+        for (const id of msg.peers) {
+          this.notePeer(id, selected.has(id));
+        }
         break;
       }
       case 'sig': {
@@ -288,11 +337,17 @@ export class Mesh {
       case 'bkill':
         this.onBulletKill?.(String(msg.f), Number(msg.i));
         break;
+      case 'bcoll':
+        this.onBulletCollision?.(fromId, msg.ev);
+        break;
       case 'chat':
         this.onChat?.(fromId, String(msg.text).slice(0, 200));
         break;
       case 'profile':
         this.onProfile?.(fromId, msg.token);
+        break;
+      case 'profile-clear':
+        this.onProfile?.(fromId, null);
         break;
     }
   }
@@ -331,6 +386,14 @@ export class Mesh {
     for (const [id, t] of this.presenceSeen) {
       if (now - t > STALE_PRESENCE_MS) this.presenceSeen.delete(id);
     }
+  }
+
+  private connectingCount(): number {
+    let count = 0;
+    for (const entry of this.peers.values()) {
+      if (!entry.peer.isOpen) count++;
+    }
+    return count;
   }
 
   private rememberEnv(id: string): void {

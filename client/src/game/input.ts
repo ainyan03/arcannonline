@@ -14,18 +14,28 @@ const KEYMAP: Record<string, readonly [number, number]> = {
 /** WASD / 矢印キーの移動入力。カメラの向きに相対な移動方向を返す。 */
 export class Keyboard {
   private readonly pressed = new Set<string>();
+  private readonly onKeyDown = (e: KeyboardEvent) => {
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.code in KEYMAP) {
+      this.pressed.add(e.code);
+      e.preventDefault();
+    }
+  };
+  private readonly onKeyUp = (e: KeyboardEvent) => this.pressed.delete(e.code);
+  private readonly onBlur = () => this.pressed.clear();
 
   constructor() {
-    window.addEventListener('keydown', (e) => {
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      if (e.code in KEYMAP) {
-        this.pressed.add(e.code);
-        e.preventDefault();
-      }
-    });
-    window.addEventListener('keyup', (e) => this.pressed.delete(e.code));
-    window.addEventListener('blur', () => this.pressed.clear());
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+    window.addEventListener('blur', this.onBlur);
+  }
+
+  dispose(): void {
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
+    window.removeEventListener('blur', this.onBlur);
+    this.pressed.clear();
   }
 
   /** カメラの yaw を基準に、フィールド座標系での単位移動ベクトルを返す。無入力なら (0,0)。 */

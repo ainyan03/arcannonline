@@ -52,6 +52,8 @@ const CELL = 2;
 const RAD_TO_DEG = 180 / Math.PI;
 const DEG_TO_RAD = Math.PI / 180;
 const COMPILED_CACHE_MAX = 128;
+const PENDING_MUTATION_MAX = 4_096;
+const PENDING_MUTATION_TICKS = MAX_SCRIPT_TICKS + BULLET_TTL_TICKS;
 
 export interface Bullet {
   alive: boolean;
@@ -89,15 +91,26 @@ export class BulletEngine {
 
   /** 弾が消えた時に呼ばれる (演出用)。sim 本体はこれに依存しない */
   onKill?: (bullet: Bullet, cause: KillCause) => void;
+  /** 担当ピアだけが衝突演算を行うための判定。未指定なら従来通り全衝突を処理する */
+  canResolveCollision?: (a: Bullet, b: Bullet) => boolean;
+  /** 衝突で確定した可換な耐久ダメージ (aへのdamageA、bへのdamageB) */
+  onCollision?: (a: Bullet, b: Bullet, damageA: number, damageB: number) => void;
   /** 同陣営など、弾同士を衝突させない所有者ペアの判定 */
   areAllied?: (ownerA: string, ownerB: string) => boolean;
 
   private readonly runs: RunEntry[] = [];
   private readonly compiled = new Map<string, Program>();
   private readonly ownerCounts = new Map<string, number>();
+  /** tick間でセル配列を再利用し、弾幕中のGC停止を抑える空間グリッド */
+  private readonly collisionGrid = new Map<number, number[]>();
   private alive = 0;
   private freeSlots: number[] = [];
   private tickCounter = 0;
+  private readonly pendingKills = new Map<string, number>();
+  private readonly pendingDamage = new Map<
+    string,
+    { damage: number; expires: number; owner?: string }
+  >();
 
   constructor(
     private readonly maxBullets = MAX_BULLETS,
@@ -262,6 +275,7 @@ export class BulletEngine {
 
   tick(): void {
     this.tickCounter++;
+    if (this.tickCounter % TICK_RATE === 0) this.cleanupPendingMutations();
     // スクリプト進行 (弾の生成)
     for (let i = this.runs.length - 1; i >= 0; i--) {
       const entry = this.runs[i];
@@ -299,6 +313,30 @@ export class BulletEngine {
     this.collide();
   }
 
+  /** 現在位置の近傍セルだけを列挙する。正確な円判定は呼び出し側で行う。 */
+  forEachNearby(
+    x: number,
+    y: number,
+    radius: number,
+    visit: (bullet: Bullet, index: number) => void,
+  ): void {
+    const extent = Math.max(radius, 0) + 0.9;
+    const minX = Math.floor((x - extent) / CELL);
+    const maxX = Math.floor((x + extent) / CELL);
+    const minY = Math.floor((y - extent) / CELL);
+    const maxY = Math.floor((y + extent) / CELL);
+    for (let cx = minX; cx <= maxX; cx++) {
+      for (let cy = minY; cy <= maxY; cy++) {
+        const cell = this.collisionGrid.get(this.cellKeyFromCoords(cx, cy));
+        if (!cell) continue;
+        for (const index of cell) {
+          const bullet = this.bullets[index];
+          if (bullet.alive) visit(bullet, index);
+        }
+      }
+    }
+  }
+
   private spawn(
     x: number,
     y: number,
@@ -313,6 +351,11 @@ export class BulletEngine {
     lifeSec = DEFAULT_BULLET_LIFE_SEC,
     inheritedVelocity: Vec2 = { x: 0, y: 0 },
   ): void {
+    const mutationKey = this.bulletKey(fireId, spawnIdx);
+    if (this.pendingKills.delete(mutationKey)) {
+      this.pendingDamage.delete(mutationKey);
+      return;
+    }
     if (this.alive >= this.maxBullets) return;
     // 残存時間 (追いつき再生で既に寿命切れの弾は生成しない)
     const lifeTicks = Math.min(
@@ -330,13 +373,17 @@ export class BulletEngine {
     const spd = Math.min(Math.max(speed, 0), 60);
     const vx = Math.cos(a) * spd + inheritedVelocity.x;
     const vy = Math.sin(a) * spd + inheritedVelocity.y;
+    const pending = this.pendingDamage.get(mutationKey);
+    const pendingDamage =
+      pending && (!pending.owner || pending.owner === owner) ? pending.damage : 0;
+    this.pendingDamage.delete(mutationKey);
     const bullet: Bullet = {
       alive: true,
       x: x + vx * DT * advanceTicks,
       y: y + vy * DT * advanceTicks,
       vx,
       vy,
-      dur: Math.min(Math.max(dur, 1), 1000),
+      dur: Math.min(Math.max(dur, 1), 1000) - pendingDamage,
       radius: Math.min(Math.max(radius, 0.05), 0.9),
       radius0: Math.min(Math.max(radius, 0.05), 0.9),
       owner,
@@ -345,6 +392,7 @@ export class BulletEngine {
       spawnIdx,
       born: this.tickCounter - advanceTicks,
     };
+    if (bullet.dur <= 0) return;
     const slot = this.freeSlots.pop();
     if (slot !== undefined) {
       this.bullets[slot] = bullet;
@@ -371,6 +419,37 @@ export class BulletEngine {
         return;
       }
     }
+    this.rememberPendingKill(fireId, spawnIdx);
+  }
+
+  /** 未生成でも保持できる、衝突による可換な耐久ダメージ。 */
+  damageByFire(
+    fireId: string,
+    spawnIdx: number,
+    damage: number,
+    expectedOwner?: string,
+  ): void {
+    if (!fireId || !Number.isFinite(damage) || damage <= 0) return;
+    const bs = this.bullets;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      if (b.alive && b.spawnIdx === spawnIdx && b.fireId === fireId) {
+        if (expectedOwner && b.owner !== expectedOwner) return;
+        b.dur -= damage;
+        if (b.dur <= 0) this.kill(i, 'collide');
+        return;
+      }
+    }
+    const key = this.bulletKey(fireId, spawnIdx);
+    const previous = this.pendingDamage.get(key);
+    if (previous?.owner && expectedOwner && previous.owner !== expectedOwner) return;
+    const old = previous?.damage ?? 0;
+    this.pendingDamage.set(key, {
+      damage: old + damage,
+      expires: this.tickCounter + PENDING_MUTATION_TICKS,
+      owner: expectedOwner ?? previous?.owner,
+    });
+    this.trimPendingMutations();
   }
 
   private kill(index: number, cause: KillCause = 'expire'): void {
@@ -417,7 +496,8 @@ export class BulletEngine {
    */
   private collide(): void {
     const bs = this.bullets;
-    const grid = new Map<number, number[]>();
+    const grid = this.collisionGrid;
+    for (const cell of grid.values()) cell.length = 0;
     for (let i = 0; i < bs.length; i++) {
       const b = bs[i];
       if (!b.alive) continue;
@@ -434,13 +514,14 @@ export class BulletEngine {
       const cy = Math.floor(a.y / CELL);
       for (let ox = -1; ox <= 1; ox++) {
         for (let oy = -1; oy <= 1; oy++) {
-          const cell = grid.get((cx + ox + 32768) * 65536 + (cy + oy + 32768));
+          const cell = grid.get(this.cellKeyFromCoords(cx + ox, cy + oy));
           if (!cell) continue;
           for (const j of cell) {
             if (j <= i) continue;
             const b = bs[j];
             if (!b.alive || !a.alive) continue;
             if (a.owner === b.owner || this.areAllied?.(a.owner, b.owner)) continue;
+            if (this.canResolveCollision && !this.canResolveCollision(a, b)) continue;
             const dx = a.x - b.x;
             const dy = a.y - b.y;
             const rr = a.radius + b.radius;
@@ -449,6 +530,7 @@ export class BulletEngine {
               const db = b.dur;
               a.dur -= db;
               b.dur -= da;
+              this.onCollision?.(a, b, db, da);
               if (a.dur <= 0) this.kill(i, 'collide');
               if (b.dur <= 0) this.kill(j, 'collide');
             }
@@ -460,8 +542,46 @@ export class BulletEngine {
     }
   }
 
+  private bulletKey(fireId: string, spawnIdx: number): string {
+    return `${fireId}\u0000${spawnIdx}`;
+  }
+
+  private rememberPendingKill(fireId: string, spawnIdx: number): void {
+    this.pendingKills.set(
+      this.bulletKey(fireId, spawnIdx),
+      this.tickCounter + PENDING_MUTATION_TICKS,
+    );
+    this.trimPendingMutations();
+  }
+
+  private trimPendingMutations(): void {
+    while (this.pendingKills.size + this.pendingDamage.size > PENDING_MUTATION_MAX) {
+      // 消滅通知を優先し、まず累積ダメージの古い項目から間引く。
+      const damageKey = this.pendingDamage.keys().next().value as string | undefined;
+      if (damageKey !== undefined) this.pendingDamage.delete(damageKey);
+      else {
+        const killKey = this.pendingKills.keys().next().value as string | undefined;
+        if (killKey === undefined) break;
+        this.pendingKills.delete(killKey);
+      }
+    }
+  }
+
+  private cleanupPendingMutations(): void {
+    for (const [key, expires] of this.pendingKills) {
+      if (expires <= this.tickCounter) this.pendingKills.delete(key);
+    }
+    for (const [key, pending] of this.pendingDamage) {
+      if (pending.expires <= this.tickCounter) this.pendingDamage.delete(key);
+    }
+  }
+
   private cellKey(x: number, y: number): number {
-    return (Math.floor(x / CELL) + 32768) * 65536 + (Math.floor(y / CELL) + 32768);
+    return this.cellKeyFromCoords(Math.floor(x / CELL), Math.floor(y / CELL));
+  }
+
+  private cellKeyFromCoords(cx: number, cy: number): number {
+    return (cx + 32768) * 65536 + (cy + 32768);
   }
 
   /** カスタムソースを含む構文木キャッシュ。長時間接続でも上限を超えて増やさない。 */

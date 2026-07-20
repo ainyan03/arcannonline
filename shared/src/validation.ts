@@ -8,6 +8,8 @@ import {
   NPCS_PER_PEER,
   PLAYER_SPEED,
   type Appearance,
+  type BulletCollisionEvent,
+  type BulletRef,
   type FireEvent,
   type NostrContent,
   type NpcStatePayload,
@@ -222,6 +224,23 @@ export function parseFireEvent(value: unknown): FireEvent | null {
   };
 }
 
+function parseBulletRef(value: unknown): BulletRef | null {
+  const v = record(value);
+  if (!v || !shortString(v.f, MAX_SIGNAL_ID_LEN) || v.f.length === 0) return null;
+  if (!integer(v.i, 0, 100_000)) return null;
+  if (!isPeerId(v.o) && !isNpcId(v.o)) return null;
+  return { f: v.f, i: v.i, o: v.o };
+}
+
+function parseBulletCollision(value: unknown): BulletCollisionEvent | null {
+  const v = record(value);
+  if (!v || !shortString(v.id, MAX_SIGNAL_ID_LEN) || v.id.length === 0) return null;
+  const a = parseBulletRef(v.a);
+  const b = parseBulletRef(v.b);
+  if (!a || !b || !finite(v.da, 1, 1000) || !finite(v.db, 1, 1000)) return null;
+  return { id: v.id, a, b, da: v.da, db: v.db };
+}
+
 export function parseReliableMessage(value: unknown): ReliableMessage | null {
   const v = record(value);
   if (!v || typeof v.type !== 'string') return null;
@@ -246,6 +265,10 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
       return shortString(v.f, MAX_SIGNAL_ID_LEN) && v.f.length > 0 && integer(v.i, 0, 100_000)
         ? { type: 'bkill', f: v.f, i: v.i }
         : null;
+    case 'bcoll': {
+      const ev = parseBulletCollision(v.ev);
+      return ev ? { type: 'bcoll', ev } : null;
+    }
     case 'chat':
       return shortString(v.text, 200) && v.text.trim().length > 0
         ? { type: 'chat', text: v.text }
@@ -254,6 +277,8 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
       return shortString(v.token, MAX_ID_TOKEN_LEN) && JWT_RE.test(v.token)
         ? { type: 'profile', token: v.token }
         : null;
+    case 'profile-clear':
+      return { type: 'profile-clear' };
     default:
       return null;
   }

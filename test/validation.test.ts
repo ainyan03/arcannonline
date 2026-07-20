@@ -81,4 +81,23 @@ describe('protocol validation', () => {
       type: 'npcs', states: [{ ...npc, id: 'invalid:npc:0' }],
     })).toBeNull();
   });
+
+  it('validates collision damage messages and bullet ownership', () => {
+    const npcId = `${peerId}:npc:0`;
+    const message = {
+      type: 'bcoll',
+      ev: {
+        id: 'collision-1',
+        a: { f: 'fire-a', i: 0, o: peerId },
+        b: { f: 'fire-b', i: 2, o: npcId },
+        da: 2,
+        db: 1,
+      },
+    };
+    expect(parseReliableMessage(message)).toMatchObject(message);
+    expect(parseReliableMessage({
+      ...message,
+      ev: { ...message.ev, a: { ...message.ev.a, o: 'invalid' } },
+    })).toBeNull();
+  });
 });

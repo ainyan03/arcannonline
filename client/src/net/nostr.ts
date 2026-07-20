@@ -25,7 +25,11 @@ export interface NostrEvent {
 
 const HEX_32_RE = /^[0-9a-f]{64}$/;
 const HEX_64_RE = /^[0-9a-f]{128}$/;
-const MAX_EVENT_CONTENT_LEN = 100_000;
+const MAX_EVENT_CONTENT_LEN = 70_000;
+const MAX_TAGS = 8;
+const MAX_TAG_ITEMS = 8;
+const MAX_TAG_ITEM_LEN = 256;
+const MAX_SIGNATURE_CHECKS_PER_SEC = 512;
 
 /** NIP-01 の正規化表現からイベントIDを計算する。 */
 export function computeNostrEventId(ev: Pick<NostrEvent, 'pubkey' | 'created_at' | 'kind' | 'tags' | 'content'>): string {
@@ -55,8 +59,13 @@ export function verifyNostrEvent(
     ev.content.length > MAX_EVENT_CONTENT_LEN ||
     !Number.isSafeInteger(ev.created_at) ||
     !Array.isArray(ev.tags) ||
+    ev.tags.length > MAX_TAGS ||
     !ev.tags.every((tag) =>
-      Array.isArray(tag) && tag.every((item) => typeof item === 'string')
+      Array.isArray(tag) &&
+      tag.length <= MAX_TAG_ITEMS &&
+      tag.every(
+        (item) => typeof item === 'string' && item.length <= MAX_TAG_ITEM_LEN,
+      )
     ) ||
     !ev.tags.some((tag) => tag[0] === 't' && tag[1] === topic) ||
     !HEX_32_RE.test(ev.id) ||
@@ -88,6 +97,8 @@ export class NostrSignaling {
   private readonly seen = new Set<string>();
   private urls: string[] = [];
   private disposed = false;
+  private signatureWindowAt = performance.now();
+  private signatureChecks = 0;
 
   /** @param privkey 永続アカウント用の鍵。省略時は使い捨て鍵を生成する */
   constructor(
@@ -212,9 +223,30 @@ export class NostrSignaling {
   }
 
   private handleEvent(ev: NostrEvent): void {
+    // 同じイベントは複数リレーから届く。高価な署名検証より先にIDで排除する。
+    if (
+      ev !== null &&
+      typeof ev === 'object' &&
+      ev.pubkey === this.pubkey
+    ) {
+      return;
+    }
+    if (
+      ev !== null &&
+      typeof ev === 'object' &&
+      typeof ev.id === 'string' &&
+      this.seen.has(ev.id)
+    ) {
+      return;
+    }
+    const now = performance.now();
+    if (now - this.signatureWindowAt >= 1_000) {
+      this.signatureWindowAt = now;
+      this.signatureChecks = 0;
+    }
+    if (this.signatureChecks >= MAX_SIGNATURE_CHECKS_PER_SEC) return;
+    this.signatureChecks++;
     if (!verifyNostrEvent(ev, this.topic)) return;
-    if (ev.pubkey === this.pubkey) return; // 自分の発行分
-    if (this.seen.has(ev.id)) return; // 複数リレーからの重複
     this.remember(ev.id);
     this.onMessage?.(ev.pubkey, ev.content);
   }

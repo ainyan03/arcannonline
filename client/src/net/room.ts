@@ -2,6 +2,7 @@ import {
   APP_ID,
   NOSTR_RELAYS,
   ROOM_NAME,
+  type BulletCollisionEvent,
   type FireEvent,
   type NpcStatePayload,
   type StatePayload,
@@ -18,6 +19,7 @@ export class GameRoom {
 
   private readonly nostr: NostrSignaling;
   private readonly mesh: Mesh;
+  private left = false;
 
   /** @param privkey 永続アカウント用の鍵。省略時は使い捨て (bot 等) */
   constructor(privkey?: Uint8Array) {
@@ -59,13 +61,19 @@ export class GameRoom {
     this.mesh.onBulletKill = fn;
   }
 
+  set onBulletCollision(
+    fn: ((id: string, ev: BulletCollisionEvent) => void) | undefined,
+  ) {
+    this.mesh.onBulletCollision = fn;
+  }
+
   /** ピアが申告したプロトコルバージョンの通知 (更新案内バナーの契機) */
   set onPeerVersion(fn: ((id: string, version: number) => void) | undefined) {
     this.mesh.onPeerVersion = fn;
   }
 
   /** GitHub 認証済みプロフィール (Firebase ID トークン) の申告 */
-  set onProfile(fn: ((id: string, token: string) => void) | undefined) {
+  set onProfile(fn: ((id: string, token: string | null) => void) | undefined) {
     this.mesh.onProfile = fn;
   }
 
@@ -103,8 +111,16 @@ export class GameRoom {
     this.mesh.broadcastBulletKill(fireId, spawnIdx);
   }
 
+  broadcastBulletCollision(ev: BulletCollisionEvent): void {
+    this.mesh.broadcastBulletCollision(ev);
+  }
+
   broadcastProfile(token: string): void {
     this.mesh.broadcastProfile(token);
+  }
+
+  broadcastProfileClear(): void {
+    this.mesh.broadcastProfileClear();
   }
 
   /** 回復要求: リレー再接続とプレゼンス再発行 (ウォッチドッグから呼ばれる) */
@@ -115,6 +131,8 @@ export class GameRoom {
   }
 
   leave(): void {
+    if (this.left) return;
+    this.left = true;
     this.mesh.leave();
     this.nostr.dispose();
   }

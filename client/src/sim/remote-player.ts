@@ -8,6 +8,7 @@ import {
 
 /** 受信スナップショットをこの時間だけ遅らせて再生し、補間を効かせる */
 export const INTERP_DELAY_MS = 120;
+const CLOCK_SKEW_WINDOW = 120;
 
 interface Snapshot {
   t: number; // 受信時刻
@@ -59,6 +60,7 @@ export class RemotePlayerSim {
   clockSkewMin = Infinity;
 
   private readonly buf: Snapshot[] = [];
+  private readonly skewSamples: number[] = [];
   private lastSeq = -1;
   private readonly sampleTmp: RemoteSample = { x: 0, y: 0, h: 0, visible: false };
 
@@ -79,7 +81,9 @@ export class RemotePlayerSim {
     this.hp = msg.hp ?? MAX_HP;
     this.ap ??= msg.ap;
     const skew = Date.now() - msg.ts;
-    if (skew < this.clockSkewMin) this.clockSkewMin = skew;
+    this.skewSamples.push(skew);
+    if (this.skewSamples.length > CLOCK_SKEW_WINDOW) this.skewSamples.shift();
+    this.clockSkewMin = Math.min(...this.skewSamples);
     this.buf.push({ t: now, x: msg.x, y: msg.y, h: msg.h });
     if (this.buf.length > 60) this.buf.shift();
   }

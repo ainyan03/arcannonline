@@ -14,11 +14,11 @@ export class GameAudio {
   private noiseBuffer: AudioBuffer | null = null;
   private readonly lastPlayed = new Map<string, number>();
   private soundEnabled = localStorage.getItem(STORAGE_KEY) !== '0';
+  private readonly unlockListener = () => void this.unlock();
 
   constructor() {
-    const unlock = () => void this.unlock();
-    window.addEventListener('pointerdown', unlock, { capture: true });
-    window.addEventListener('keydown', unlock, { capture: true });
+    window.addEventListener('pointerdown', this.unlockListener, { capture: true });
+    window.addEventListener('keydown', this.unlockListener, { capture: true });
   }
 
   get enabled(): boolean {
@@ -31,6 +31,15 @@ export class GameAudio {
     if (this.soundEnabled) void this.unlock();
     if (this.master) this.master.gain.value = this.soundEnabled ? MASTER_VOLUME : 0;
     return this.soundEnabled;
+  }
+
+  dispose(): void {
+    window.removeEventListener('pointerdown', this.unlockListener, { capture: true });
+    window.removeEventListener('keydown', this.unlockListener, { capture: true });
+    void this.context?.close();
+    this.context = null;
+    this.master = null;
+    this.noiseBuffer = null;
   }
 
   async unlock(): Promise<void> {

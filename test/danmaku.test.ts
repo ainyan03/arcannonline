@@ -76,6 +76,61 @@ describe('BulletEngine', () => {
     expect(bullet?.vy).toBeCloseTo(-2);
   });
 
+  it('keeps kills and collision damage that arrive before bullet creation', () => {
+    const killed = new BulletEngine();
+    killed.killByFire('late-fire', 0);
+    killed.startScript(
+      'fire(0, 10, 1, 0.2);', 1, () => ({ x: 0, y: 0 }), 0,
+      'owner', undefined, 0, 'late-fire',
+    );
+    killed.tick();
+    expect(killed.aliveCount).toBe(0);
+
+    const damaged = new BulletEngine();
+    damaged.damageByFire('late-damage', 0, 1);
+    damaged.startScript(
+      'fire(0, 10, 2, 0.2);', 1, () => ({ x: 0, y: 0 }), 0,
+      'owner', undefined, 0, 'late-damage',
+    );
+    damaged.tick();
+    expect(damaged.bullets.find((b) => b.alive)?.dur).toBe(1);
+  });
+
+  it('lets only the selected collision resolver mutate durability', () => {
+    const engine = new BulletEngine();
+    engine.areAllied = () => false;
+    engine.canResolveCollision = () => false;
+    engine.startScript('fire(0, 0, 1, 0.2);', 1, () => ({ x: 0, y: 0 }), 0,
+      'owner-a', undefined, 0, 'a');
+    engine.startScript('fire(0, 0, 1, 0.2);', 2, () => ({ x: 0, y: 0 }), 0,
+      'owner-b', undefined, 0, 'b');
+    engine.tick();
+    expect(engine.aliveCount).toBe(2);
+  });
+
+  it('reuses the spatial grid for nearby hit queries without duplicates', () => {
+    const engine = new BulletEngine();
+    engine.startScript('fire(0, 0, 1, 0.2);', 1, () => ({ x: 2, y: 3 }), 0,
+      'owner', undefined, 0, 'nearby');
+    engine.tick();
+    const first: number[] = [];
+    engine.forEachNearby(2, 3, 1, (_bullet, index) => first.push(index));
+    engine.tick();
+    const second: number[] = [];
+    engine.forEachNearby(2, 3, 1, (_bullet, index) => second.push(index));
+    expect(first).toHaveLength(1);
+    expect(second).toEqual(first);
+  });
+
+  it('does not apply a claimed collision to a bullet owned by someone else', () => {
+    const engine = new BulletEngine();
+    engine.damageByFire('owned', 0, 100, 'attacker');
+    engine.startScript('fire(0, 1, 2, 0.2);', 1, () => ({ x: 0, y: 0 }), 0,
+      'real-owner', undefined, 0, 'owned');
+    engine.tick();
+    expect(engine.bullets.find((b) => b.alive)?.dur).toBe(2);
+  });
+
   it('rejects scripts that cannot finish within the duration budget', () => {
     const engine = new BulletEngine();
     expect(engine.estimateCost('wait(999999);', 1, 0, () => ({ x: 0, y: 0 })))

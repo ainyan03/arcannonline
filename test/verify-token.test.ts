@@ -6,6 +6,7 @@ import {
 
 const PROJECT = 'arcannonline';
 const NOW = 1_800_000_000;
+const PEER_ID = 'a'.repeat(64);
 
 function b64url(bytes: Uint8Array): string {
   return Buffer.from(bytes)
@@ -19,7 +20,7 @@ function b64urlJson(obj: unknown): string {
   return b64url(new TextEncoder().encode(JSON.stringify(obj)));
 }
 
-async function makeKeys() {
+async function makeKeys(kid = 'test-key') {
   const pair = await crypto.subtle.generateKey(
     {
       name: 'RSASSA-PKCS1-v1_5',
@@ -33,7 +34,7 @@ async function makeKeys() {
   const jwk = await crypto.subtle.exportKey('jwk', pair.publicKey);
   return {
     privateKey: pair.privateKey,
-    jwks: [{ kty: 'RSA', kid: 'test-key', n: jwk.n!, e: jwk.e! }],
+    jwks: [{ kty: 'RSA', kid, n: jwk.n!, e: jwk.e! }],
   };
 }
 
@@ -58,8 +59,12 @@ function validPayload(): Record<string, unknown> {
     sub: 'uid-123',
     iat: NOW - 60,
     exp: NOW + 3_000,
-    name: 'octocat',
+    name: `arcn:v1:${PEER_ID}:octocat`,
     picture: 'https://avatars.githubusercontent.com/u/583231?v=4',
+    firebase: {
+      sign_in_provider: 'github.com',
+      identities: { 'github.com': ['583231'] },
+    },
   };
 }
 
@@ -72,6 +77,7 @@ describe('verifyFirebaseToken', () => {
     const profile = await verifyFirebaseToken(
       token,
       PROJECT,
+      PEER_ID,
       async () => jwks,
       NOW,
     );
@@ -79,6 +85,9 @@ describe('verifyFirebaseToken', () => {
       uid: 'uid-123',
       name: 'octocat',
       picture: 'https://avatars.githubusercontent.com/u/583231?v=4',
+      githubId: '583231',
+      boundPeerId: PEER_ID,
+      expiresAt: (NOW + 3_000) * 1000,
     });
   });
 
@@ -88,7 +97,7 @@ describe('verifyFirebaseToken', () => {
     const [h, , s] = token.split('.');
     const forged = `${h}.${b64urlJson({ ...validPayload(), name: 'evil' })}.${s}`;
     expect(
-      await verifyFirebaseToken(forged, PROJECT, async () => jwks, NOW),
+      await verifyFirebaseToken(forged, PROJECT, PEER_ID, async () => jwks, NOW),
     ).toBeNull();
   });
 
@@ -98,7 +107,7 @@ describe('verifyFirebaseToken', () => {
     const token = await signToken(signer.privateKey, validPayload());
     // JWKS には別鍵しかない (kid は一致するが公開鍵が異なる)
     expect(
-      await verifyFirebaseToken(token, PROJECT, async () => other.jwks, NOW),
+      await verifyFirebaseToken(token, PROJECT, PEER_ID, async () => other.jwks, NOW),
     ).toBeNull();
   });
 
@@ -114,7 +123,7 @@ describe('verifyFirebaseToken', () => {
     for (const payload of cases) {
       const token = await signToken(privateKey, payload);
       expect(
-        await verifyFirebaseToken(token, PROJECT, async () => jwks, NOW),
+        await verifyFirebaseToken(token, PROJECT, PEER_ID, async () => jwks, NOW),
       ).toBeNull();
     }
   });
@@ -123,7 +132,7 @@ describe('verifyFirebaseToken', () => {
     const { jwks } = await makeKeys();
     const body = `${b64urlJson({ alg: 'none', kid: 'test-key' })}.${b64urlJson(validPayload())}`;
     expect(
-      await verifyFirebaseToken(`${body}.x`, PROJECT, async () => jwks, NOW),
+      await verifyFirebaseToken(`${body}.x`, PROJECT, PEER_ID, async () => jwks, NOW),
     ).toBeNull();
   });
 
@@ -136,10 +145,54 @@ describe('verifyFirebaseToken', () => {
     const profile = await verifyFirebaseToken(
       token,
       PROJECT,
+      PEER_ID,
       async () => jwks,
       NOW,
     );
     expect(profile?.uid).toBe('uid-123');
     expect(profile?.picture).toBeUndefined();
+  });
+
+  it('rejects a valid token replayed by a different peer', async () => {
+    const { privateKey, jwks } = await makeKeys();
+    const token = await signToken(privateKey, validPayload());
+    expect(
+      await verifyFirebaseToken(token, PROJECT, 'b'.repeat(64), async () => jwks, NOW),
+    ).toBeNull();
+  });
+
+  it('requires an actual GitHub provider identity', async () => {
+    const { privateKey, jwks } = await makeKeys();
+    const token = await signToken(privateKey, {
+      ...validPayload(),
+      firebase: { sign_in_provider: 'password', identities: {} },
+    });
+    expect(
+      await verifyFirebaseToken(token, PROJECT, PEER_ID, async () => jwks, NOW),
+    ).toBeNull();
+  });
+
+  it('refreshes a still-fresh JWKS cache when a new kid appears', async () => {
+    const oldKeys = await makeKeys('old-key');
+    const newKeys = await makeKeys('new-key');
+    const oldToken = await signToken(
+      oldKeys.privateKey,
+      validPayload(),
+      { alg: 'RS256', kid: 'old-key' },
+    );
+    const newToken = await signToken(
+      newKeys.privateKey,
+      validPayload(),
+      { alg: 'RS256', kid: 'new-key' },
+    );
+    let fetches = 0;
+    const fetcher = async () => (++fetches === 1 ? oldKeys.jwks : newKeys.jwks);
+    expect(
+      await verifyFirebaseToken(oldToken, PROJECT, PEER_ID, fetcher, NOW),
+    ).not.toBeNull();
+    expect(
+      await verifyFirebaseToken(newToken, PROJECT, PEER_ID, fetcher, NOW),
+    ).not.toBeNull();
+    expect(fetches).toBe(2);
   });
 });

@@ -37,17 +37,19 @@ function loadAppearance(): Appearance {
  * 一度参加したタブが再読み込みされた場合 (スマホの画面ロック復帰等) は、
  * オーバーレイを出さずに保存済みの設定で即時再参加する。
  */
-/** GitHub 連携中はアカウント名を強制する (state の名前上限16文字に切り詰め) */
-function accountName(): string | null {
-  const acc = currentAccount();
-  return acc ? acc.name.slice(0, 16) : null;
-}
-
-export function showJoinOverlay(): Promise<JoinResult> {
+export function showJoinOverlay(
+  peerId: string,
+  allowGithubBinding = true,
+): Promise<JoinResult> {
+  const accountForThisPeer = () => {
+    const acc = currentAccount();
+    return acc?.boundPeerId === peerId ? acc : null;
+  };
+  const boundAccountName = () => accountForThisPeer()?.name.slice(0, 16) ?? null;
   const savedName = localStorage.getItem(NAME_KEY);
   if (sessionStorage.getItem(AUTOJOIN_KEY) && savedName) {
     return Promise.resolve({
-      name: accountName() ?? savedName,
+      name: boundAccountName() ?? savedName,
       appearance: loadAppearance(),
     });
   }
@@ -79,7 +81,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
     });
     // GitHub 連携中はアカウント名で参加する (名前欄はロック)
     const syncNameLock = () => {
-      const ghName = accountName();
+      const ghName = boundAccountName();
       input.disabled = ghName !== null;
       input.value = ghName ?? manualName;
       input.title = ghName !== null ? 'GitHub 連携中はアカウント名で参加します' : '';
@@ -116,7 +118,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
     ghError.style.display = 'none';
     const renderGh = () => {
       ghRow.replaceChildren();
-      const acc = currentAccount();
+      const acc = accountForThisPeer();
       if (acc) {
         if (acc.picture) {
           const img = document.createElement('img');
@@ -129,14 +131,15 @@ export function showJoinOverlay(): Promise<JoinResult> {
         nameSpan.textContent = acc.name;
         const badge = document.createElement('span');
         badge.className = 'gh-badge';
-        badge.textContent = '✓ 連携済み';
+        badge.textContent = '✓ GitHubログイン済み';
+        badge.title = 'GitHubログインと現在のピア鍵を確認済み（表示名は自己申告）';
         const unlink = document.createElement('button');
         unlink.type = 'button';
         unlink.className = 'gh-unlink';
         unlink.textContent = '解除';
         unlink.addEventListener('click', () => void logoutGithub());
         ghRow.append(nameSpan, badge, unlink);
-      } else {
+      } else if (allowGithubBinding) {
         const login = document.createElement('button');
         login.type = 'button';
         login.className = 'gh-login';
@@ -145,7 +148,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
           login.disabled = true;
           login.textContent = 'GitHub に接続中…';
           ghError.style.display = 'none';
-          loginWithGithub().catch((err: unknown) => {
+          loginWithGithub(peerId).catch((err: unknown) => {
             const code = (err as { code?: string } | null)?.code;
             ghError.textContent =
               code === 'auth/popup-blocked'
@@ -156,6 +159,11 @@ export function showJoinOverlay(): Promise<JoinResult> {
           });
         });
         ghRow.appendChild(login);
+      } else {
+        const note = document.createElement('span');
+        note.className = 'gh-name';
+        note.textContent = 'GitHub連携は先に開いたタブで使用中';
+        ghRow.appendChild(note);
       }
     };
     const renderAuthState = () => {
@@ -163,7 +171,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
       syncNameLock();
     };
     renderAuthState();
-    onAccountChange(renderAuthState);
+    const unsubscribeAuth = onAccountChange(renderAuthState);
 
     const button = document.createElement('button');
     button.textContent = '参加';
@@ -180,6 +188,7 @@ export function showJoinOverlay(): Promise<JoinResult> {
       localStorage.setItem(NAME_KEY, manualName.trim().slice(0, 16) || 'noname');
       localStorage.setItem(APPEARANCE_KEY, JSON.stringify(appearance));
       sessionStorage.setItem(AUTOJOIN_KEY, '1');
+      unsubscribeAuth();
       overlay.remove();
       resolve({ name, appearance });
     };

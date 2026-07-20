@@ -9,9 +9,10 @@ import {
   parseReliableMessage,
   parseRealtimeMessage,
 } from '../../../shared/src/validation';
+import { ReliableOutbox } from './reliable-outbox';
 
 export interface PeerEvents {
-  /** state チャネルが開通した */
+  /** state / reliable の両チャネルが開通した */
   onOpen: () => void;
   /** 接続が失敗・切断された（相手側都合含む） */
   onClose: () => void;
@@ -40,7 +41,8 @@ export class Peer {
   private readonly stateCh: RTCDataChannel;
   private readonly reliableCh: RTCDataChannel;
   /** reliable チャネル open 前の送信を保持するキュー */
-  private readonly reliableQueue: string[] = [];
+  private readonly reliableOutbox = new ReliableOutbox();
+  private opened = false;
   private readonly polite: boolean;
   private makingOffer = false;
   private ignoreOffer = false;
@@ -66,7 +68,7 @@ export class Peer {
       id: 1,
     });
 
-    this.stateCh.onopen = () => events.onOpen();
+    this.stateCh.onopen = () => this.notifyOpenIfReady();
     this.stateCh.onclose = () => this.notifyClose();
     this.stateCh.onmessage = (ev) => {
       try {
@@ -89,9 +91,10 @@ export class Peer {
     // まだ open していないことがある。その間の送信 (初回 PEX・profile 等) を
     // 捨てず、open したときにまとめて流す
     this.reliableCh.onopen = () => {
-      for (const data of this.reliableQueue) this.reliableCh.send(data);
-      this.reliableQueue.length = 0;
+      this.reliableOutbox.drain((data) => this.reliableCh.send(data));
+      this.notifyOpenIfReady();
     };
+    this.reliableCh.onclose = () => this.notifyClose();
 
     // オファーは impolite 側 (id が小さい側) のみが出す。glare が起きないため
     // rollback が不要になり、リレーに流すイベント数も半減する
@@ -148,7 +151,14 @@ export class Peer {
   }
 
   get isOpen(): boolean {
-    return this.stateCh.readyState === 'open';
+    return (
+      this.stateCh.readyState === 'open' &&
+      this.reliableCh.readyState === 'open'
+    );
+  }
+
+  get reliableDroppedCount(): number {
+    return this.reliableOutbox.dropped;
   }
 
   sendState(msg: StatePayload): void {
@@ -169,18 +179,30 @@ export class Peer {
     const data = JSON.stringify(msg);
     if (this.reliableCh.readyState === 'open') {
       this.reliableCh.send(data);
-    } else if (
-      this.reliableCh.readyState === 'connecting' &&
-      this.reliableQueue.length < 64
-    ) {
+    } else if (this.reliableCh.readyState === 'connecting') {
       // open 前は取りこぼさずキューする (閉じたチャネルへは送らない)
-      this.reliableQueue.push(data);
+      const replaceKey =
+        msg.type === 'pex'
+          ? 'pex'
+          : msg.type === 'profile' || msg.type === 'profile-clear'
+            ? 'profile'
+            : undefined;
+      this.reliableOutbox.enqueue(data, replaceKey);
+    } else {
+      this.reliableOutbox.dropped++;
     }
   }
 
   close(): void {
     this.closed = true;
+    this.reliableOutbox.clear();
     this.pc.close();
+  }
+
+  private notifyOpenIfReady(): void {
+    if (this.opened || !this.isOpen) return;
+    this.opened = true;
+    this.events.onOpen();
   }
 
   private notifyClose(): void {
