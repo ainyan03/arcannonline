@@ -40,6 +40,13 @@ const CULL_BOUND = FIELD_SIZE / 2 + 10;
 const BULLET_TTL_TICKS = TICK_RATE * 8;
 /** 残存時間の既定値 (秒)。射程 ≒ 速度 × この秒数 (典型速度 10〜18 で 40〜72) */
 const DEFAULT_BULLET_LIFE_SEC = 4;
+/**
+ * 寿命の残りがこの tick 数を切ったら弾を縮小していく (消滅演出)。
+ * 見た目だけでなく判定半径も一緒に縮める (ttl は決定論なので全クライアント一致)
+ */
+const SHRINK_TICKS = TICK_RATE; // 1秒
+/** 縮小の下限倍率 (消える瞬間まで視認・被弾できる大きさを残す) */
+const SHRINK_FLOOR = 0.25;
 /** 衝突判定の空間ハッシュのセルサイズ (最大弾半径×2 より大きいこと) */
 const CELL = 2;
 const RAD_TO_DEG = 180 / Math.PI;
@@ -54,7 +61,10 @@ export interface Bullet {
   vy: number;
   /** 耐久度。弾同士の衝突で互いに減算し合い、0 以下で消滅する */
   dur: number;
+  /** 現在の半径。寿命の最後の1秒は radius0 から縮小していく */
   radius: number;
+  /** 生成時の半径 */
+  radius0: number;
   owner: string;
   ttl: number;
   /** 発射イベントID。spawnIdx と合わせてクライアント間で弾を特定する */
@@ -270,6 +280,13 @@ export class BulletEngine {
       b.x += b.vx * DT;
       b.y += b.vy * DT;
       b.ttl--;
+      // 消滅間際は縮小していく (突然消えるのではなく減衰して消える演出。
+      // 判定半径も同時に縮み、見た目と当たりが食い違わない)
+      if (b.ttl < SHRINK_TICKS) {
+        b.radius =
+          b.radius0 *
+          (SHRINK_FLOOR + (1 - SHRINK_FLOOR) * Math.max(b.ttl / SHRINK_TICKS, 0));
+      }
       if (
         b.ttl <= 0 ||
         b.x < -CULL_BOUND || b.x > CULL_BOUND ||
@@ -321,6 +338,7 @@ export class BulletEngine {
       vy,
       dur: Math.min(Math.max(dur, 1), 1000),
       radius: Math.min(Math.max(radius, 0.05), 0.9),
+      radius0: Math.min(Math.max(radius, 0.05), 0.9),
       owner,
       ttl,
       fireId,

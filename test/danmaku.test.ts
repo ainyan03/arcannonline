@@ -46,6 +46,17 @@ describe('BulletEngine', () => {
     expect(engine.aliveOwned('b')).toBe(0); // ただし上限8秒でキャップ
   });
 
+  it('shrinks bullets (visual and hit radius) during their final second', () => {
+    const engine = new BulletEngine();
+    engine.startScript('fire(0, 0, 1, 0.2);', 1, () => ({ x: 0, y: 0 }), 0, 'a');
+    for (let i = 0; i < 60 * 3; i++) engine.tick(); // 3.0秒: まだ全サイズ
+    const bullet = engine.bullets.find((b) => b.alive)!;
+    expect(bullet.radius).toBeCloseTo(0.2, 5);
+    for (let i = 0; i < 30; i++) engine.tick(); // 3.5秒: 残り0.5秒 → 縮小中
+    expect(bullet.radius).toBeLessThan(0.15);
+    expect(bullet.radius).toBeGreaterThan(0.05);
+  });
+
   it('adds the firing source velocity to every spawned bullet', () => {
     const engine = new BulletEngine();
     engine.startScript(
