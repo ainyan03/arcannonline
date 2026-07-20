@@ -7,6 +7,7 @@ import {
   MAX_HP,
   PLAYER_SPEED,
   TRAIL_BOOST_MUL,
+  TRAIL_TURN_MUL,
   type Appearance,
   type StatePayload,
   type Vec2,
@@ -95,6 +96,11 @@ export class LocalPlayerSim {
     this.boostLeft = Math.max(this.boostLeft, durationSec);
   }
 
+  /** 外部の実時間タイマーが終了した時に、残っているブーストを解除する。 */
+  stopBoost(): void {
+    this.boostLeft = 0;
+  }
+
   /** エネルギーを消費する。足りなければ消費せず false を返す */
   trySpendEnergy(cost: number): boolean {
     if (this.energy < cost) return false;
@@ -165,7 +171,8 @@ export class LocalPlayerSim {
 
     // 慣性: 速度を目標速度へ指数的に追従させる。急な方向転換では
     // 速度ベクトルが徐々に回るため、軌跡が曲線を描く
-    const k = Math.min(1, dt * this.movement.accelRate);
+    const turnMul = this.boostLeft > 0 ? TRAIL_TURN_MUL : 1;
+    const k = Math.min(1, dt * this.movement.accelRate * turnMul);
     this.vel.x += (targetVx - this.vel.x) * k;
     this.vel.y += (targetVy - this.vel.y) * k;
 

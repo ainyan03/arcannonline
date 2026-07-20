@@ -148,6 +148,7 @@ export class LocalNpcSim {
   readonly vel: Vec2 = { x: 0, y: 0 };
   heading = 0;
   hp = NPC_MAX_HP;
+  maxHp = NPC_MAX_HP;
   mode: NpcMode = 'spawn';
   kind: NpcKind = 'wisp';
 
@@ -373,6 +374,7 @@ export class LocalNpcSim {
       vy: this.vel.y,
       h: this.heading,
       hp: this.hp,
+      mhp: this.maxHp,
       mode: this.mode,
       ts: Date.now(),
       k: this.kind,
@@ -401,7 +403,8 @@ export class LocalNpcSim {
     }
     this.vel.x = 0;
     this.vel.y = 0;
-    this.hp = NPC_KINDS[this.kind].maxHp;
+    this.maxHp = NPC_KINDS[this.kind].maxHp;
+    this.hp = this.maxHp;
     this.mode = 'spawn';
     this.aggroId = null;
     this.aggroUntil = 0;
@@ -446,6 +449,7 @@ export class RemoteNpcSim {
   lastX = 0;
   lastY = 0;
   hp = NPC_MAX_HP;
+  maxHp = NPC_MAX_HP;
   mode: NpcMode = 'spawn';
   kind: NpcKind = 'wisp';
 
@@ -468,6 +472,11 @@ export class RemoteNpcSim {
     this.hp = state.hp;
     this.mode = state.mode;
     this.kind = state.k ?? 'wisp';
+    this.maxHp =
+      state.mhp ??
+      (this.kind === 'boss'
+        ? Math.max(this.maxHp, state.hp)
+        : NPC_KINDS[this.kind].maxHp);
     this.lastX = state.x;
     this.lastY = state.y;
     this.buf.push({

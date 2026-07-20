@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import {
   DANMAKU_SCRIPTS,
   PLAYER_SHOT_SOURCES,
+  TRAIL_BURST_SCRIPT_ID,
   TRAIL_SCRIPT_ID,
   bombScriptIdFor,
 } from '../../../shared/src/danmaku-scripts';
@@ -21,6 +22,15 @@ import {
 } from '../../../shared/src/npc-scripts';
 import {
   AUTO_SHOT_RANGE,
+  GARDEN_COST,
+  GARDEN_DURATION_MS,
+  GARDEN_FINAL_DAMAGE,
+  GARDEN_FINAL_RADIUS,
+  GARDEN_FORWARD_OFFSET,
+  GARDEN_PULSE_DAMAGE,
+  GARDEN_PULSE_INTERVAL_MS,
+  GARDEN_RADIUS,
+  GARDEN_SEARCH_RANGE,
   MISSILE_BOSS_DAMAGE,
   MISSILE_COST_PER_SHOT,
   MISSILE_COUNT,
@@ -36,6 +46,7 @@ import {
   NOVA_KNOCKBACK,
   NOVA_RADIUS,
   TRAIL_COST,
+  TRAIL_BURST_INTERVAL_MS,
   TRAIL_DURATION_MS,
   TRAIL_INTERVAL_MS,
   BASE_HIT_RADIUS,
@@ -60,6 +71,7 @@ import {
   type Appearance,
   type BaseHitEvent,
   type FireEvent,
+  type GardenEvent,
   type ChatLogEntry,
   type NpcKind,
   type MissileEvent,
@@ -89,7 +101,11 @@ import { StickUI } from '../ui/stick';
 import { UpdateBannerUI } from '../ui/update-banner';
 import { WaveBannerUI } from '../ui/wave-banner';
 import { LocalPlayerSim } from '../sim/local-player';
-import { isInFront, planMissileVolley } from '../sim/targeting';
+import {
+  chooseGardenCenter,
+  isInFront,
+  planMissileVolley,
+} from '../sim/targeting';
 import {
   WAVE_CALM_MS,
   WAVE_COMPOSITION,
@@ -117,6 +133,8 @@ import { BaseView } from '../view3d/base-view';
 import { createObstacles } from '../view3d/obstacle-view';
 import { MissileView } from '../view3d/missile-view';
 import { NovaView } from '../view3d/nova-view';
+import { GardenView } from '../view3d/garden-view';
+import { TrailView } from '../view3d/trail-view';
 import { createWorld, type World } from '../view3d/world';
 import { cameraRelativeDir, Keyboard } from './input';
 import { BulletSync } from './bullet-sync';
@@ -224,6 +242,8 @@ export class Game {
   /** 直近に観測したボスの HP とそのラウンド (リーダー交代時の引き継ぎ用) */
   private lastBossHp: number | null = null;
   private lastBossRound = -1;
+  /** 観測したボスの召喚時最大HP (リーダー交代後のHPバー分母) */
+  private lastBossMaxHp: number | null = null;
   /** ボス弾幕のローテーション位置 */
   private bossScriptIdx = 0;
   /** 途中参加者へ引き継ぐ直近チャット発言 (時刻順) */
@@ -252,9 +272,25 @@ export class Game {
   private readonly missileView: MissileView;
   /** スターノヴァの視覚エフェクト */
   private readonly novaView: NovaView;
+  /** スターダストトレイルの連続リボン */
+  private readonly trailView: TrailView;
+  /** ブルームガーデンの持続フィールド表示 */
+  private readonly gardenView: GardenView;
   /** スターダストトレイル (箒のボム) の発動終了時刻と次の設置弾時刻 */
   private trailUntil = 0;
   private trailNextAt = 0;
+  private gardenUntil = 0;
+  private readonly trailPoints: Vec2[] = [];
+  private readonly pendingTrailBursts: { pos: Vec2; at: number }[] = [];
+  /** 受信済みガーデン。周期ダメージは各NPCの担当ピアだけが適用する */
+  private readonly activeGardens: {
+    id: string;
+    ownerId: string;
+    x: number;
+    y: number;
+    nextPulseAt: number;
+    endAt: number;
+  }[] = [];
   /** 自分担当の標的へ到達予定のミサイル (到達時刻に必中ダメージを確定) */
   private readonly pendingMissileHits: {
     targetId: string;
@@ -313,6 +349,8 @@ export class Game {
     // 1発ずつ飛び出すたびに連射音を鳴らす
     this.missileView.onLaunch = () => this.audio.playAutoFire();
     this.novaView = new NovaView(this.world.scene);
+    this.trailView = new TrailView(this.world.scene);
+    this.gardenView = new GardenView(this.world.scene);
     this.baseStatus = new BaseStatusUI(container);
     this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP, true);
     this.profiles = new RemoteProfiles((id, profile) => {
@@ -499,7 +537,7 @@ export class Game {
         const wasAlive = existed && npc.sim.mode !== 'dead';
         npc.sim.push(state, now);
         this.ensureNpcViewKind(npc, false);
-        npc.view.setState(state.hp, state.mode);
+        npc.view.setState(state.hp, state.mode, state.mhp);
         if (state.k === 'boss') {
           // HP は同一ラウンド内で減る方向にだけ観測し、遅延した旧スナップ
           // ショットでリーダー交代後のボスが回復しないようにする
@@ -529,6 +567,14 @@ export class Game {
     };
     this.room.onFire = (id, ev) => this.handleRemoteFire(id, ev);
     this.room.onNova = (id, ev) => this.handleNova(id, ev);
+    this.room.onGarden = (id, ev) => {
+      const skew = this.remotes.get(id)?.sim.clockSkewMin;
+      const delay = Math.max(
+        0,
+        Date.now() - ev.at - (Number.isFinite(skew) ? (skew as number) : 0),
+      );
+      this.handleGarden(id, ev, Math.min(delay, GARDEN_DURATION_MS));
+    };
     this.room.onMissiles = (id, ev) => {
       // 伝送遅延ぶんを差し引き、全端末でほぼ同時刻に着弾させる
       const skew = this.remotes.get(id)?.sim.clockSkewMin;
@@ -742,6 +788,8 @@ export class Game {
     this.audio.dispose();
     this.missileView.dispose();
     this.novaView.dispose();
+    this.trailView.dispose();
+    this.gardenView.dispose();
     this.playerView.dispose();
     for (const remote of this.remotes.values()) remote.view.dispose();
     for (const npc of this.localNpcs) npc.view.dispose();
@@ -780,6 +828,10 @@ export class Game {
     const dtMs = Math.min(now - this.lastFrame, 50);
     this.lastFrame = now;
     const dt = dtMs / 1000;
+
+    // タブ休止中は sim の dt が進まないため、実時間で終了するトレイルに
+    // 合わせて残存ブーストを明示的に解除する
+    this.expireTrail(now);
 
     // 移動入力: キーボード > 仮想スティック > タップ地点への自動移動 (sim側)
     let move = this.input.moveDir(this.camera.yaw);
@@ -838,7 +890,7 @@ export class Game {
 
     for (const npc of this.localNpcs) {
       this.ensureNpcViewKind(npc, true);
-      npc.view.setState(npc.sim.hp, npc.sim.mode);
+      npc.view.setState(npc.sim.hp, npc.sim.mode, npc.sim.maxHp);
       npc.view.sync(npc.sim.pos.x, npc.sim.pos.y, npc.sim.heading, npc.sim.alive);
       npc.view.animate(now);
       if (npc.sim.alive) {
@@ -857,7 +909,7 @@ export class Game {
     for (const npc of this.remoteNpcs.values()) {
       const s = npc.sim.sample(now);
       this.ensureNpcViewKind(npc, false);
-      npc.view.setState(npc.sim.hp, npc.sim.mode);
+      npc.view.setState(npc.sim.hp, npc.sim.mode, npc.sim.maxHp);
       npc.view.sync(s.x, s.y, s.h, s.visible);
       npc.view.animate(now);
       if (s.visible) {
@@ -875,6 +927,8 @@ export class Game {
     this.particles.update(dt);
     this.missileView.update(now);
     this.novaView.update(now);
+    this.trailView.update(now);
+    this.gardenView.update(now);
     this.applySanctuary(dt, now);
 
     this.camera.update(
@@ -903,6 +957,8 @@ export class Game {
     this.announceWaveTransition(wave);
     this.manageBoss(wave, now);
     this.processMissileHits(now);
+    this.processTrailBursts(now);
+    this.processGardens(now);
     const waveMod = {
       // ボス段は雑魚が再出現せず、戦いの焦点がボスに移る
       // (撃破されたボスもこの抑止で再出現しない)
@@ -980,6 +1036,7 @@ export class Game {
       );
       // 召喚時の接続人数でHPをスケールさせる (多人数の合算火力への対策)
       sim.hp = bossHpFor(this.remotes.size + 1);
+      sim.maxHp = sim.hp;
       // リーダー交代の引き継ぎ: 同ラウンドで観測済みの HP から再開する
       if (this.bossDefeatedRound === wave.round) {
         // 撃破済みの墓標も新リーダーが配信し、さらに後から来た参加者へ伝える
@@ -987,6 +1044,7 @@ export class Game {
         sim.mode = 'dead';
       } else if (this.lastBossRound === wave.round && this.lastBossHp !== null) {
         sim.hp = Math.max(1, Math.min(this.lastBossHp, sim.hp));
+        sim.maxHp = this.lastBossMaxHp ?? sim.maxHp;
       }
       const view = new EnemyView(sim.id, true, 'boss');
       view.sync(sim.pos.x, sim.pos.y, sim.heading);
@@ -1049,11 +1107,17 @@ export class Game {
     if (this.lastBossRound !== round) {
       this.lastBossRound = round;
       this.lastBossHp = state.hp;
+      this.lastBossMaxHp = state.mhp ?? state.hp;
     } else {
       this.lastBossHp = Math.min(this.lastBossHp ?? state.hp, state.hp);
+      this.lastBossMaxHp = Math.max(
+        this.lastBossMaxHp ?? 0,
+        state.mhp ?? state.hp,
+      );
     }
     const localBoss = this.localNpcs.find((npc) => npc.sim.kind === 'boss');
     if (!localBoss) return;
+    if (this.lastBossMaxHp !== null) localBoss.sim.maxHp = this.lastBossMaxHp;
     if (state.mode === 'dead') {
       localBoss.sim.hp = 0;
       localBoss.sim.mode = 'dead';
@@ -1323,6 +1387,10 @@ export class Game {
       this.fireMissiles(now);
       return;
     }
+    if (style === 3) {
+      this.fireGarden(now);
+      return;
+    }
     const source = DANMAKU_SCRIPTS[this.bombScriptId]?.source ?? null;
     if (!source) return;
 
@@ -1496,6 +1564,11 @@ export class Game {
       MAX_FIRE_CATCHUP_TICKS,
     );
     const origin = { x: ev.x, y: ev.y };
+    if (ev.script === TRAIL_SCRIPT_ID) {
+      this.trailView.addPoint(fromId, origin.x, origin.y, performance.now());
+    } else if (ev.script === TRAIL_BURST_SCRIPT_ID) {
+      this.particles.burst(origin.x, origin.y, new THREE.Color(0xd6a8ff), 0.9);
+    }
     // 新プロトコルは照準位置もイベントへ固定保存する。旧クライアントからの
     // イベントは受信時点の位置を一度だけ解決し、以後は同じ値を使う。
     const targetPos =
@@ -1725,8 +1798,10 @@ export class Game {
       y: this.player.pos.y,
       at: Date.now(),
     };
-    this.handleNova(this.room.selfId, ev);
+    // reliable の順序で nova → 個別の弾消去通知を届ける。受信側がそれぞれ
+    // 受信時点の座標で再判定すると、通信遅延ぶん弾の生死が分岐してしまう
     this.room.broadcastNova(ev);
+    this.handleNova(this.room.selfId, ev);
     this.audio.playFire();
     this.updateHud();
   }
@@ -1743,14 +1818,18 @@ export class Game {
     this.novaView.burst(ev.x, ev.y, now);
     this.particles.burst(ev.x, ev.y, new THREE.Color(0xfff2a8), 2.5);
     this.audio.playHit();
-    // 範囲内の敵弾を一掃する
-    this.engine.forEachNearby(ev.x, ev.y, NOVA_RADIUS, (bullet, index) => {
-      if (!isNpcId(bullet.owner)) return;
-      const dx = bullet.x - ev.x;
-      const dy = bullet.y - ev.y;
-      if (dx * dx + dy * dy > NOVA_RADIUS * NOVA_RADIUS) return;
-      this.engine.killAt(index);
-    });
+    // 発動端末だけが消去対象を確定し、既存の弾ID通知で全端末へ収束させる。
+    // remote は nova の視覚/NPC効果だけを適用し、座標から弾を再選定しない。
+    if (fromId === this.room.selfId) {
+      this.engine.forEachNearby(ev.x, ev.y, NOVA_RADIUS, (bullet, index) => {
+        if (!isNpcId(bullet.owner)) return;
+        const dx = bullet.x - ev.x;
+        const dy = bullet.y - ev.y;
+        if (dx * dx + dy * dy > NOVA_RADIUS * NOVA_RADIUS) return;
+        this.engine.killAt(index);
+        this.room.broadcastBulletKill(bullet.fireId, bullet.spawnIdx);
+      });
+    }
     // 自分担当の敵へダメージ + ノックバック
     for (const npc of this.localNpcs) {
       if (!npc.sim.alive) continue;
@@ -1790,10 +1869,28 @@ export class Game {
     );
     this.trailUntil = now + TRAIL_DURATION_MS;
     this.trailNextAt = now;
+    this.trailPoints.length = 0;
     // 発動中は加速し、駆け抜けながら設置弾の帯を描く
     this.player.boost(TRAIL_DURATION_MS / 1000);
     this.audio.playFire();
     this.updateHud();
+  }
+
+  /** 実時間上のトレイル終了を移動シミュレーションへ反映する。 */
+  private expireTrail(now: number): void {
+    if (this.trailUntil === 0 || now < this.trailUntil) return;
+    this.trailUntil = 0;
+    this.trailNextAt = 0;
+    this.player.stopBoost();
+    this.trailView.finish(this.room.selfId, now);
+    // 残した順番に星形爆発へ変換し、走り抜けた経路全体を攻撃へつなげる
+    for (let i = 0; i < this.trailPoints.length; i++) {
+      this.pendingTrailBursts.push({
+        pos: { ...this.trailPoints[i] },
+        at: now + i * TRAIL_BURST_INTERVAL_MS,
+      });
+    }
+    this.trailPoints.length = 0;
   }
 
   /** トレイル発動中、一定間隔で飛行痕に設置弾を置く (fires バッチで配布) */
@@ -1802,18 +1899,48 @@ export class Game {
     if (this.inSanctuary()) return; // 聖域内は攻撃不能 (時間は進む)
     this.trailNextAt = now + TRAIL_INTERVAL_MS;
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
+    this.trailPoints.push(origin);
+    this.trailView.addPoint(this.room.selfId, origin.x, origin.y, now);
+    this.emitEffectScript(TRAIL_SCRIPT_ID, origin, this.player.heading, true);
+  }
+
+  /** トレイル終了後の星形爆発を、軌跡順に発射する。 */
+  private processTrailBursts(now: number): void {
+    while (this.pendingTrailBursts.length > 0) {
+      const burst = this.pendingTrailBursts[0];
+      if (now < burst.at) break;
+      this.pendingTrailBursts.shift();
+      this.emitEffectScript(TRAIL_BURST_SCRIPT_ID, burst.pos, 0, true);
+      this.particles.burst(
+        burst.pos.x,
+        burst.pos.y,
+        new THREE.Color(0xd6a8ff),
+        0.9,
+      );
+    }
+  }
+
+  /** プレイヤー特殊効果用のDSL弾をローカル再生し、ピアへ配布する。 */
+  private emitEffectScript(
+    script: string,
+    origin: Vec2,
+    dir: number,
+    batched: boolean,
+  ): void {
+    const source = PLAYER_SHOT_SOURCES[script] ?? DANMAKU_SCRIPTS[script]?.source;
+    if (!source) return;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
-      script: TRAIL_SCRIPT_ID,
+      script,
       seed: (Math.random() * 0x100000000) >>> 0,
       x: origin.x,
       y: origin.y,
-      dir: this.player.heading,
+      dir,
       at: Date.now(),
     };
     this.rememberFireId(ev.id);
     this.engine.startScript(
-      PLAYER_SHOT_SOURCES[TRAIL_SCRIPT_ID],
+      source,
       ev.seed,
       () => origin,
       ev.dir,
@@ -1822,7 +1949,136 @@ export class Game {
       0,
       ev.id,
     );
-    this.room.broadcastAutoFire(ev);
+    if (batched) this.room.broadcastAutoFire(ev);
+    else this.room.broadcastFire(ev);
+  }
+
+  /** ブルームガーデンを敵集団または自機前方へ設置する。 */
+  private fireGarden(now: number): void {
+    if (now < this.gardenUntil) return;
+    if (!this.player.trySpendEnergy(GARDEN_COST)) return;
+    const center = chooseGardenCenter(
+      this.player.pos,
+      this.player.heading,
+      this.gardenEnemyPositions(),
+      GARDEN_FORWARD_OFFSET,
+      GARDEN_SEARCH_RANGE,
+      GARDEN_RADIUS,
+    );
+    this.lastFireAt = now;
+    this.gardenUntil = now + GARDEN_DURATION_MS;
+    this.player.invulnUntil = Math.max(
+      this.player.invulnUntil,
+      now + BOMB_INVULN_MS,
+    );
+    const ev: GardenEvent = {
+      id: crypto.randomUUID(),
+      x: center.x,
+      y: center.y,
+      at: Date.now(),
+    };
+    this.room.broadcastGarden(ev);
+    this.handleGarden(this.room.selfId, ev, 0);
+    // 花弁弾は敵弾との相殺と視覚密度を担当する
+    this.emitEffectScript('garden', center, this.player.heading, false);
+    this.audio.playFire();
+    this.updateHud();
+  }
+
+  private gardenEnemyPositions(): Vec2[] {
+    const result: Vec2[] = [];
+    for (const npc of this.localNpcs) {
+      if (npc.sim.alive) result.push({ ...npc.sim.pos });
+    }
+    for (const npc of this.remoteNpcs.values()) {
+      if (npc.sim.mode !== 'dead') {
+        result.push({ x: npc.sim.lastX, y: npc.sim.lastY });
+      }
+    }
+    return result;
+  }
+
+  private handleGarden(fromId: string, ev: GardenEvent, delayMs: number): void {
+    if (!this.rememberFireId(ev.id)) return;
+    const now = performance.now();
+    const startedAt = now - delayMs;
+    this.gardenView.plant(ev.x, ev.y, startedAt);
+    this.activeGardens.push({
+      id: ev.id,
+      ownerId: fromId,
+      x: ev.x,
+      y: ev.y,
+      nextPulseAt: startedAt + GARDEN_PULSE_INTERVAL_MS,
+      endAt: startedAt + GARDEN_DURATION_MS,
+    });
+  }
+
+  /** ガーデンの周期攻撃と最終開花を、担当中のNPCへだけ適用する。 */
+  private processGardens(now: number): void {
+    for (let i = this.activeGardens.length - 1; i >= 0; i--) {
+      const garden = this.activeGardens[i];
+      while (garden.nextPulseAt < garden.endAt && now >= garden.nextPulseAt) {
+        this.damageLocalNpcsInGarden(
+          garden.ownerId,
+          garden.x,
+          garden.y,
+          GARDEN_RADIUS,
+          GARDEN_PULSE_DAMAGE,
+          now,
+        );
+        garden.nextPulseAt += GARDEN_PULSE_INTERVAL_MS;
+        this.particles.burst(
+          garden.x,
+          garden.y,
+          new THREE.Color(0x83ffc1),
+          0.65,
+        );
+      }
+      if (now < garden.endAt) continue;
+      this.damageLocalNpcsInGarden(
+        garden.ownerId,
+        garden.x,
+        garden.y,
+        GARDEN_FINAL_RADIUS,
+        GARDEN_FINAL_DAMAGE,
+        now,
+      );
+      this.particles.burst(
+        garden.x,
+        garden.y,
+        new THREE.Color(0xffa8e8),
+        2.8,
+      );
+      this.audio.playHit();
+      this.activeGardens.splice(i, 1);
+    }
+  }
+
+  private damageLocalNpcsInGarden(
+    ownerId: string,
+    x: number,
+    y: number,
+    radius: number,
+    damage: number,
+    now: number,
+  ): void {
+    for (const npc of this.localNpcs) {
+      if (!npc.sim.alive) continue;
+      if (Math.hypot(npc.sim.pos.x - x, npc.sim.pos.y - y) > radius) continue;
+      const died = npc.sim.takeHit(damage, now);
+      if (!died) {
+        npc.sim.provoke(ownerId, now);
+        continue;
+      }
+      this.particles.burst(
+        npc.sim.pos.x,
+        npc.sim.pos.y,
+        new THREE.Color(0x9b63da),
+        npc.sim.kind === 'boss' ? 3 : 1.2,
+      );
+      this.audio.playDefeat();
+      if (npc.sim.kind === 'boss') this.onBossDefeated();
+    }
   }
 
   /** 追尾ミサイルのボム発射 (月の魔導士)。標的がいなければ撃たない */
@@ -2101,16 +2357,20 @@ export class Game {
                 ).length;
                 return planned === 0 ? null : MISSILE_COST_PER_SHOT * planned;
               })()
-            : this.estimateSelectedCost();
+            : style === 3
+              ? GARDEN_COST
+              : this.estimateSelectedCost();
     const sanctuary = this.inSanctuary();
-    // 多段DSLボム (花) だけが実行中ゲートの対象。箒は発動中の重ねがけ不可
-    const dslBomb = style !== 0 && style !== 1 && style !== 2;
+    // 未知クラスのフォールバックだけがDSL実行中ゲートの対象。
+    // トレイルとガーデンは持続中の重ねがけ不可
+    const dslBomb = style < 0 || style > 3;
     this.fireBtn.setEnabled(
       !sanctuary &&
         estCost !== null &&
         this.player.energy >= estCost &&
         (!dslBomb || !this.engine.ownerHasRun(this.room.selfId)) &&
-        (style !== 1 || performance.now() >= this.trailUntil),
+        (style !== 1 || performance.now() >= this.trailUntil) &&
+        (style !== 3 || performance.now() >= this.gardenUntil),
     );
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +

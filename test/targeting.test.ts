@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { isInFront, planMissileVolley } from '../client/src/sim/targeting';
+import {
+  chooseGardenCenter,
+  isInFront,
+  planMissileVolley,
+} from '../client/src/sim/targeting';
 import {
   MISSILE_SPEED,
   MISSILE_TRAVEL_MAX_MS,
@@ -63,5 +67,32 @@ describe('planMissileVolley', () => {
       'boss', 'boss', 'boss', 'boss', 'boss', 'boss',
     ]);
     expect(planMissileVolley([], 6, 24)).toEqual([]);
+  });
+});
+
+describe('chooseGardenCenter', () => {
+  it('uses a forward placement when no enemy is in range', () => {
+    expect(chooseGardenCenter({ x: 0, y: 0 }, 0, [], 15, 55, 12)).toEqual({
+      x: 15,
+      y: 0,
+    });
+  });
+
+  it('selects the densest enemy cluster rather than an isolated target', () => {
+    const center = chooseGardenCenter(
+      { x: 0, y: 0 },
+      0,
+      [
+        { x: 8, y: 20 },
+        { x: 29, y: 1 },
+        { x: 31, y: -1 },
+        { x: 30, y: 2 },
+      ],
+      15,
+      55,
+      12,
+    );
+    expect(center.x).toBeCloseTo(30);
+    expect(center.y).toBeCloseTo(2 / 3);
   });
 });

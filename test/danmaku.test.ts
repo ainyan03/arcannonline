@@ -3,6 +3,7 @@ import {
   CLASS_BOMB_SCRIPT_IDS,
   DANMAKU_SCRIPTS,
   NORMAL_SHOT_SCRIPT_SOURCE,
+  TRAIL_BURST_SCRIPT_SOURCE,
   TRAIL_SCRIPT_SOURCE,
   bombScriptIdFor,
 } from '../shared/src/danmaku-scripts';
@@ -27,6 +28,22 @@ describe('stardust trail', () => {
     expect(bullet?.vx).toBe(0);
     expect(bullet?.vy).toBe(0);
     expect(bullet?.x).toBe(5);
+  });
+
+  it('turns each trail point into an eight-way burst', () => {
+    const engine = new BulletEngine();
+    engine.startScript(
+      TRAIL_BURST_SCRIPT_SOURCE,
+      1,
+      () => ({ x: 0, y: 0 }),
+      0,
+      'o'.repeat(64),
+      undefined,
+      0,
+      'trail-burst-1',
+    );
+    engine.tick();
+    expect(engine.aliveCount).toBe(8);
   });
 });
 

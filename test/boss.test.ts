@@ -39,6 +39,7 @@ describe('boss npc', () => {
     const boss = new LocalNpcSim(`${OWNER}:npc:${BOSS_NPC_SLOT}`, 0, 'boss');
     expect(boss.kind).toBe('boss');
     expect(boss.hp).toBe(NPC_KINDS.boss.maxHp);
+    expect(boss.makeState().mhp).toBe(NPC_KINDS.boss.maxHp);
     const dist = Math.hypot(boss.pos.x, boss.pos.y);
     expect(dist).toBeGreaterThanOrEqual(44);
     expect(boss.makeState().k).toBe('boss');
@@ -62,6 +63,7 @@ describe('boss npc', () => {
       vy: 0,
       h: 0,
       hp: NPC_KINDS.boss.maxHp,
+      mhp: NPC_KINDS.boss.maxHp,
       mode: 'chase',
       ts: 1,
       k: 'boss',
@@ -70,6 +72,7 @@ describe('boss npc', () => {
     expect(parseNpcStatePayload({ ...base, id: `${OWNER}:npc:9` })).toBeNull();
     // ボス HP は boss 種別でだけ受理される
     expect(parseNpcStatePayload({ ...base, k: 'wisp' })).toBeNull();
+    expect(parseNpcStatePayload({ ...base, hp: 901, mhp: 900 })).toBeNull();
   });
 
   it('has replayable sources for every boss script', () => {

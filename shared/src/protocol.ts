@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 29;
+export const PROTO_VERSION = 31;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -295,11 +295,37 @@ export interface NovaEvent {
 // 一定時間、飛行痕に設置弾の帯を残す。弾は通常の fires バッチで配布される
 // ため追加のメッセージは不要。発動中は移動速度も上がる (ローカル適用)
 
-export const TRAIL_DURATION_MS = 3_000;
-export const TRAIL_INTERVAL_MS = 150;
+export const TRAIL_DURATION_MS = 3_500;
+export const TRAIL_INTERVAL_MS = 100;
 export const TRAIL_COST = 80;
 /** 発動中の移動速度倍率 (PLAYER_SPEED_MAX の算出にも使う) */
-export const TRAIL_BOOST_MUL = 1.3;
+export const TRAIL_BOOST_MUL = 1.45;
+/** 発動中の旋回・速度追従倍率 */
+export const TRAIL_TURN_MUL = 1.5;
+/** 終了後、軌跡を順に爆発させる間隔 */
+export const TRAIL_BURST_INTERVAL_MS = 45;
+
+// --- ブルームガーデン (花の魔女のボム) ------------------------------------
+// 前方または敵集団へ花園を設置し、周期ダメージと最終開花で制圧する。
+// ダメージは対象NPCの担当ピアだけが確定し、視覚は各端末で再生する。
+
+export const GARDEN_COST = 120;
+export const GARDEN_DURATION_MS = 4_000;
+export const GARDEN_PULSE_INTERVAL_MS = 500;
+export const GARDEN_RADIUS = 12;
+export const GARDEN_FINAL_RADIUS = 14;
+export const GARDEN_PULSE_DAMAGE = 5;
+export const GARDEN_FINAL_DAMAGE = 28;
+export const GARDEN_FORWARD_OFFSET = 15;
+export const GARDEN_SEARCH_RANGE = 55;
+
+export interface GardenEvent {
+  id: string;
+  x: number;
+  y: number;
+  /** 発動時刻 (送信者の時計) */
+  at: number;
+}
 
 // --- 魔力灯の聖域 -----------------------------------------------------------
 // 点灯中の魔力灯の周囲は回復エリア (聖域)。ただし攻撃は撃てない。
@@ -368,6 +394,8 @@ export interface NpcStatePayload {
   vy: number;
   h: number;
   hp: number;
+  /** 召喚時の最大HP。人数スケールするボスのHPバー・引き継ぎ用 */
+  mhp?: number;
   mode: NpcMode;
   ts: number;
   /** 敵の種別 (省略時は wisp) */
@@ -462,6 +490,8 @@ export type ReliableMessage =
   | { type: 'missiles'; ev: MissileEvent }
   /** スターノヴァ (敵弾一掃 + ダメージ + ノックバックの衝撃波) */
   | { type: 'nova'; ev: NovaEvent }
+  /** ブルームガーデン (持続フィールド + 最終開花) */
+  | { type: 'garden'; ev: GardenEvent }
   /**
    * 弾の消滅通知 (被弾で消費した弾など)。弾は「発射イベントID f + その
    * スクリプトが何発目に生成したか i」で全クライアント共通に特定できる

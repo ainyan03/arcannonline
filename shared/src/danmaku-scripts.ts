@@ -63,10 +63,21 @@ export const TRAIL_SCRIPT_SOURCE = `
 fire(dir, 0, 10, 0.45, 2.5);
 `;
 
+/** トレイル終了時に軌跡を順番に爆発させる短命の星形弾。 */
+export const TRAIL_BURST_SCRIPT_ID = 'broom-trail-burst';
+export const TRAIL_BURST_SCRIPT_SOURCE = `
+let i = 0;
+loop (8) {
+  fire(i * 45, 10, 8, 0.32, 0.65);
+  i = i + 1;
+}
+`;
+
 /** 通常ショット系の ID → ソース (受信側の再生用。旧 normal-shot も含む) */
 export const PLAYER_SHOT_SOURCES: Record<string, string> = {
   [NORMAL_SHOT_SCRIPT_ID]: NORMAL_SHOT_SCRIPT_SOURCE,
   [TRAIL_SCRIPT_ID]: TRAIL_SCRIPT_SOURCE,
+  [TRAIL_BURST_SCRIPT_ID]: TRAIL_BURST_SCRIPT_SOURCE,
   ...CLASS_SHOT_SCRIPTS,
 };
 
@@ -123,18 +134,18 @@ fire(aim + 10, 16, 12, 0.2, 1.6);
   garden: {
     name: 'ブルームガーデン',
     source: `
-// 花の魔女のボム: 3段階に咲き広がる花弁弾のフィールド。
-// 低速で外へ漂う設置型の面制圧 + 弾消し (敵弾と相殺する)
+// 花園の中心から咲き続ける花弁弾。直接ダメージの周期パルスとは別に、
+// 敵弾との相殺と画面上の密度を担当する
 let ring = 0;
-loop (3) {
-  let n = 14 + ring * 6;
+loop (4) {
+  let n = 12 + ring * 4;
   let i = 0;
   loop (n) {
-    fire(i * 360 / n + ring * 7, 2.2 + ring * 1.4, 4, 0.25, 3.5 - ring * 0.4);
+    fire(i * 360 / n + ring * 11, 2 + ring * 0.8, 4, 0.25, 4);
     i = i + 1;
   }
   ring = ring + 1;
-  wait(12);
+  wait(30);
 }
 `,
   },

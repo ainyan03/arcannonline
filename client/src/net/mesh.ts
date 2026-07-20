@@ -15,6 +15,7 @@ import {
   STALE_PRESENCE_MS,
   type BaseHitEvent,
   type ChatLogEntry,
+  type GardenEvent,
   type MissileEvent,
   type NovaEvent,
   type FireEvent,
@@ -74,6 +75,8 @@ export class Mesh {
   onMissiles?: (id: string, ev: MissileEvent) => void;
   /** スターノヴァ (敵弾一掃 + ノックバック衝撃波) の発動通知 */
   onNova?: (id: string, ev: NovaEvent) => void;
+  /** ブルームガーデン (持続フィールド + 最終開花) の発動通知 */
+  onGarden?: (id: string, ev: GardenEvent) => void;
   onChat?: (id: string, text: string, msgId?: string, at?: number) => void;
   /** 途中参加時に既存ピアから届く直近チャット履歴 */
   onChatLog?: (id: string, entries: ChatLogEntry[]) => void;
@@ -184,6 +187,12 @@ export class Mesh {
   broadcastNova(ev: NovaEvent): void {
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendReliable({ type: 'nova', ev });
+    }
+  }
+
+  broadcastGarden(ev: GardenEvent): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'garden', ev });
     }
   }
 
@@ -446,6 +455,9 @@ export class Mesh {
         break;
       case 'nova':
         this.onNova?.(fromId, msg.ev);
+        break;
+      case 'garden':
+        this.onGarden?.(fromId, msg.ev);
         break;
       case 'bkill':
         this.onBulletKill?.(String(msg.f), Number(msg.i));

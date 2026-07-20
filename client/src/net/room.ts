@@ -5,6 +5,7 @@ import {
   type BaseHitEvent,
   type BulletCollisionEvent,
   type ChatLogEntry,
+  type GardenEvent,
   type MissileEvent,
   type NovaEvent,
   type FireEvent,
@@ -63,6 +64,11 @@ export class GameRoom {
   /** スターノヴァ (敵弾一掃 + ノックバック衝撃波) の発動通知 */
   set onNova(fn: ((id: string, ev: NovaEvent) => void) | undefined) {
     this.mesh.onNova = fn;
+  }
+
+  /** ブルームガーデン (持続フィールド + 最終開花) の発動通知 */
+  set onGarden(fn: ((id: string, ev: GardenEvent) => void) | undefined) {
+    this.mesh.onGarden = fn;
   }
 
   set onChat(
@@ -144,6 +150,10 @@ export class GameRoom {
 
   broadcastNova(ev: NovaEvent): void {
     this.mesh.broadcastNova(ev);
+  }
+
+  broadcastGarden(ev: GardenEvent): void {
+    this.mesh.broadcastGarden(ev);
   }
 
   broadcastAutoFire(ev: FireEvent): void {

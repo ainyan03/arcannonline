@@ -159,9 +159,9 @@ export class EnemyView {
     this.body.rotation.y = -heading;
   }
 
-  setState(hp: number, mode: NpcMode): void {
-    if (hp > this.maxHp) {
-      this.maxHp = hp;
+  setState(hp: number, mode: NpcMode, maxHp = hp): void {
+    if (maxHp > this.maxHp) {
+      this.maxHp = maxHp;
       this.redrawHp();
     }
     if (hp !== this.hp) {

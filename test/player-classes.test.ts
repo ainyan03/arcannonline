@@ -98,6 +98,16 @@ describe('player classes', () => {
     expect(speedOf(star)).toBeGreaterThan(PLAYER_SPEED * 1.2);
   });
 
+  it('can end a trail boost when its real-time effect expires', () => {
+    const broom = new LocalPlayerSim({ ...CLEAR }, 'b', appearance(1));
+    broom.boost(999);
+    for (let i = 0; i < 300; i++) broom.update(DT, { x: 1, y: 0 });
+    expect(speedOf(broom)).toBeGreaterThan(PLAYER_SPEED * 1.25);
+    broom.stopBoost();
+    for (let i = 0; i < 300; i++) broom.update(DT, { x: 1, y: 0 });
+    expect(speedOf(broom)).toBeLessThanOrEqual(PLAYER_SPEED * 1.25 + 0.01);
+  });
+
   it('the moon mage is slower than base and the star witch can stop', () => {
     const moon = new LocalPlayerSim({ ...CLEAR }, 'm', appearance(2));
     for (let i = 0; i < 300; i++) moon.update(DT, { x: 1, y: 0 });

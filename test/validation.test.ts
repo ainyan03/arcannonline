@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { NPCS_PER_PEER } from '../shared/src/protocol';
+import { PLAYER_SPEED_MAX } from '../shared/src/player-classes';
 import {
   parseAppearance,
   parseFireEvent,
@@ -58,9 +59,13 @@ describe('protocol validation', () => {
       vy: -3,
     });
     expect(parseFireEvent({ ...base, vx: 4 })).toBeNull();
-    // 上限はクラス補正+トレイルブースト込みの最高速度 (PLAYER_SPEED_MAX = 13)
-    expect(parseFireEvent({ ...base, vx: 12, vy: 0 })).not.toBeNull();
-    expect(parseFireEvent({ ...base, vx: 14, vy: 0 })).toBeNull();
+    // 上限はクラス補正+トレイルブースト込みの共有値を使う
+    expect(
+      parseFireEvent({ ...base, vx: PLAYER_SPEED_MAX, vy: 0 }),
+    ).not.toBeNull();
+    expect(
+      parseFireEvent({ ...base, vx: PLAYER_SPEED_MAX + 0.1, vy: 0 }),
+    ).toBeNull();
     expect(parseFireEvent({
       ...base,
       target: `${peerId}:npc:0`,
@@ -133,6 +138,18 @@ describe('protocol validation', () => {
     expect(parseReliableMessage({ type: 'nova', ev: { ...ev, id: '' } })).toBeNull();
     expect(
       parseReliableMessage({ type: 'nova', ev: { ...ev, x: 999 } }),
+    ).toBeNull();
+  });
+
+  it('validates garden events', () => {
+    const ev = { id: 'garden-1', x: 12, y: -4, at: 1_000 };
+    expect(parseReliableMessage({ type: 'garden', ev }))
+      .toMatchObject({ type: 'garden', ev });
+    expect(
+      parseReliableMessage({ type: 'garden', ev: { ...ev, id: '' } }),
+    ).toBeNull();
+    expect(
+      parseReliableMessage({ type: 'garden', ev: { ...ev, y: -999 } }),
     ).toBeNull();
   });
 

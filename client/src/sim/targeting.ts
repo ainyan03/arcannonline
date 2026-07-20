@@ -1,4 +1,4 @@
-import type { Vec2 } from '../../../shared/src/protocol';
+import { FIELD_SIZE, type Vec2 } from '../../../shared/src/protocol';
 
 export interface MissileCandidate {
   id: string;
@@ -37,4 +37,50 @@ export function isInFront(origin: Vec2, heading: number, target: Vec2): boolean 
   const dx = target.x - origin.x;
   const dy = target.y - origin.y;
   return dx * Math.cos(heading) + dy * Math.sin(heading) > 0;
+}
+
+/**
+ * ガーデンの設置点。敵がいなければ自機前方、いれば最も密集した集団の
+ * 重心を選ぶ。単独の敵ならその位置へ直接置く。
+ */
+export function chooseGardenCenter(
+  origin: Vec2,
+  heading: number,
+  enemies: readonly Vec2[],
+  forwardOffset: number,
+  searchRange: number,
+  clusterRadius: number,
+): Vec2 {
+  const bound = FIELD_SIZE / 2 - clusterRadius;
+  const anchor = {
+    x: origin.x + Math.cos(heading) * forwardOffset,
+    y: origin.y + Math.sin(heading) * forwardOffset,
+  };
+  const candidates = enemies.filter(
+    (enemy) => Math.hypot(enemy.x - origin.x, enemy.y - origin.y) <= searchRange,
+  );
+  let center = anchor;
+  let bestCount = 0;
+  let bestAnchorDist = Infinity;
+  for (const candidate of candidates) {
+    const cluster = candidates.filter(
+      (other) =>
+        Math.hypot(other.x - candidate.x, other.y - candidate.y) <= clusterRadius,
+    );
+    const cx = cluster.reduce((sum, p) => sum + p.x, 0) / cluster.length;
+    const cy = cluster.reduce((sum, p) => sum + p.y, 0) / cluster.length;
+    const anchorDist = Math.hypot(cx - anchor.x, cy - anchor.y);
+    if (
+      cluster.length > bestCount ||
+      (cluster.length === bestCount && anchorDist < bestAnchorDist)
+    ) {
+      bestCount = cluster.length;
+      bestAnchorDist = anchorDist;
+      center = { x: cx, y: cy };
+    }
+  }
+  return {
+    x: Math.min(Math.max(center.x, -bound), bound),
+    y: Math.min(Math.max(center.y, -bound), bound),
+  };
 }

@@ -17,6 +17,7 @@ import {
   type BulletRef,
   type ChatLogEntry,
   type FireEvent,
+  type GardenEvent,
   type MissileEvent,
   type NovaEvent,
   type NostrContent,
@@ -119,6 +120,10 @@ export function parseNpcStatePayload(value: unknown): NpcStatePayload | null {
   if (v.k !== undefined && !(typeof v.k === 'string' && v.k in NPC_KINDS)) return null;
   const kind = (v.k as NpcKind | undefined) ?? 'wisp';
   if (!finite(v.hp, 0, NPC_KINDS[kind].maxHp) || !finite(v.ts, 0, 10_000_000_000_000)) return null;
+  if (
+    v.mhp !== undefined &&
+    (!finite(v.mhp, 1, NPC_KINDS[kind].maxHp) || v.hp > v.mhp)
+  ) return null;
   if (!['spawn', 'wander', 'chase', 'attack', 'dead'].includes(String(v.mode))) return null;
   return {
     id: v.id,
@@ -129,6 +134,7 @@ export function parseNpcStatePayload(value: unknown): NpcStatePayload | null {
     vy: v.vy,
     h: v.h,
     hp: v.hp,
+    mhp: v.mhp as number | undefined,
     mode: v.mode as NpcStatePayload['mode'],
     ts: v.ts,
     k: v.k as NpcKind | undefined,
@@ -322,6 +328,13 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
       if (!finite(ev.x, -FIELD_SIZE, FIELD_SIZE) || !finite(ev.y, -FIELD_SIZE, FIELD_SIZE)) return null;
       if (!finite(ev.at, 0, 10_000_000_000_000)) return null;
       return { type: 'nova', ev: { id: ev.id, x: ev.x, y: ev.y, at: ev.at } };
+    }
+    case 'garden': {
+      const ev = record(v.ev);
+      if (!ev || !shortString(ev.id, MAX_SIGNAL_ID_LEN) || ev.id.length === 0) return null;
+      if (!finite(ev.x, -FIELD_SIZE, FIELD_SIZE) || !finite(ev.y, -FIELD_SIZE, FIELD_SIZE)) return null;
+      if (!finite(ev.at, 0, 10_000_000_000_000)) return null;
+      return { type: 'garden', ev: { id: ev.id, x: ev.x, y: ev.y, at: ev.at } };
     }
     case 'missiles': {
       const ev = record(v.ev);
