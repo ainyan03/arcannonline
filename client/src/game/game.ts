@@ -163,7 +163,7 @@ export class Game {
   private readonly baseDefense = new BaseDefense();
   private readonly baseView: BaseView;
   private readonly baseStatus: BaseStatusUI;
-  private lastBaseHp = BASE_MAX_HP;
+  private lastBaseLit = true;
   private readonly waveBanner: WaveBannerUI;
   /** 直前フレームのウェーブ状態 (フェーズ遷移の告知判定用)。参加直後は告知しない */
   private lastWave: WaveState | null = null;
@@ -224,7 +224,7 @@ export class Game {
     this.world.scene.add(this.baseView.object);
     this.world.scene.add(createObstacles());
     this.baseStatus = new BaseStatusUI(container);
-    this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP);
+    this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP, true);
     this.profiles = new RemoteProfiles((id, profile) => {
       const remote = this.remotes.get(id);
       if (!remote) return;
@@ -768,7 +768,10 @@ export class Game {
       kinds: WAVE_COMPOSITION[wave.tier],
     };
     // 拠点防衛ループ: 敵はプレイヤーではなく中央の魔力灯を主目標にする。
-    const targets: NpcTarget[] = [{ id: BASE_ID, pos: { x: 0, y: 0 } }];
+    // 消灯中の魔力灯は狙わない (再点火までの回復時間を作る)
+    const targets: NpcTarget[] = this.baseDefense.lit()
+      ? [{ id: BASE_ID, pos: { x: 0, y: 0 } }]
+      : [];
     for (const npc of this.localNpcs) {
       const attack = npc.sim.update(dt, now, targets, waveMod);
       if (attack) this.fireNpc(npc.sim, attack);
@@ -854,10 +857,13 @@ export class Game {
    * 実体化したためローカルで遮って消す (ダメージ確定は担当ピアの権威のまま)
    */
   private checkBaseHits(): void {
+    const lit = this.baseDefense.lit();
     this.engine.forEachNearby(0, 0, BASE_HIT_RADIUS, (bullet, index) => {
       const rr = bullet.radius + BASE_HIT_RADIUS;
       if (bullet.x * bullet.x + bullet.y * bullet.y > rr * rr) return;
-      if (!npcBelongsToPeer(bullet.owner, this.room.selfId)) {
+      if (!lit || !npcBelongsToPeer(bullet.owner, this.room.selfId)) {
+        // 消灯中は流れ弾のダメージ履歴を作らない (全快までの回復を妨げない)。
+        // 履歴のマージ自体はゲートせず、収束性は保つ
         this.engine.killAt(index);
         return;
       }
@@ -898,16 +904,17 @@ export class Game {
 
   private updateBaseView(now: number): void {
     const hp = this.baseDefense.hp();
-    this.baseView.update(now, hp, BASE_MAX_HP);
-    this.baseStatus.update(hp, BASE_MAX_HP);
-    if (this.lastBaseHp > 0 && hp <= 0) {
-      this.chat.addLine('', '* 魔力灯が消えました。周囲の敵を退けて再点火を待とう', true);
+    const lit = this.baseDefense.lit();
+    this.baseView.update(now, hp, BASE_MAX_HP, lit);
+    this.baseStatus.update(hp, BASE_MAX_HP, lit);
+    if (this.lastBaseLit && !lit) {
+      this.chat.addLine('', '* 魔力灯が消えました。全快すると再点火します', true);
       this.audio.playDefeat();
-    } else if (this.lastBaseHp <= 0 && hp > 0) {
+    } else if (!this.lastBaseLit && lit) {
       this.chat.addLine('', '* 魔力灯が再点火しました', true);
       this.audio.playJoin();
     }
-    this.lastBaseHp = hp;
+    this.lastBaseLit = lit;
   }
 
   private checkNpcHits(now: number): void {
@@ -1504,7 +1511,8 @@ export class Game {
       `peers: ${this.room.peerCount}\n` +
       `ice: ${iceSummary()}\n` +
       `${this.room.stats}\n` +
-      `魔力灯: ${Math.ceil(this.baseDefense.hp())}/${BASE_MAX_HP}\n` +
+      `魔力灯: ${Math.ceil(this.baseDefense.hp())}/${BASE_MAX_HP}` +
+      `${this.baseDefense.lit() ? '' : ' (消灯中: 全快で再点火)'}\n` +
       `${this.waveHudLine()}\n` +
       `enemies: ${this.localNpcs.filter((npc) => npc.sim.alive).length}` +
       ` local / ${this.remoteNpcs.size} remote\n` +

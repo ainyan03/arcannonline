@@ -56,17 +56,17 @@ export class BaseView {
     this.object.add(this.light);
   }
 
-  update(now: number, hp: number, maxHp: number): void {
+  update(now: number, hp: number, maxHp: number, lit: boolean): void {
     const ratio = Math.min(Math.max(hp / maxHp, 0), 1);
-    const active = ratio > 0;
     this.crystal.rotation.y = now * 0.0007;
-    this.crystal.position.y = active ? 2.4 + Math.sin(now * 0.002) * 0.16 : 1.25;
-    this.crystal.scale.setScalar(active ? 0.82 + ratio * 0.18 : 0.55);
-    this.crystalMaterial.emissiveIntensity = active ? 0.5 + ratio * 1.8 : 0.08;
-    this.crystalMaterial.color.setHex(active ? 0x91e8ff : 0x514f67);
-    this.light.intensity = active ? 4 + ratio * 12 : 0;
+    this.crystal.position.y = lit ? 2.4 + Math.sin(now * 0.002) * 0.16 : 1.25;
+    this.crystal.scale.setScalar(lit ? 0.82 + ratio * 0.18 : 0.55);
+    // 消灯中もゲージ回復に応じてほのかに明るくなり、再点火の近さが分かる
+    this.crystalMaterial.emissiveIntensity = lit ? 0.5 + ratio * 1.8 : 0.08 + ratio * 0.35;
+    this.crystalMaterial.color.setHex(lit ? 0x91e8ff : 0x514f67);
+    this.light.intensity = lit ? 4 + ratio * 12 : 0;
     this.rings[0].rotation.z = now * 0.00045;
     this.rings[1].rotation.z = -now * 0.00032;
-    for (const ring of this.rings) ring.visible = active;
+    for (const ring of this.rings) ring.visible = lit;
   }
 }

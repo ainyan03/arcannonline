@@ -19,11 +19,14 @@ export class BaseStatusUI {
     container.appendChild(this.root);
   }
 
-  update(hp: number, maxHp: number): void {
+  update(hp: number, maxHp: number, lit: boolean): void {
     const ratio = Math.min(Math.max(hp / maxHp, 0), 1);
     this.fill.style.width = `${ratio * 100}%`;
-    this.value.textContent = hp > 0 ? `${Math.ceil(hp)} / ${maxHp}` : '消灯中';
-    this.root.classList.toggle('danger', ratio <= 0.3);
-    this.root.classList.toggle('down', hp <= 0);
+    // 消灯中はゲージが回復の進み具合を示す (全快で再点火)
+    this.value.textContent = lit
+      ? `${Math.ceil(hp)} / ${maxHp}`
+      : `消灯中 (${Math.ceil(ratio * 100)}%)`;
+    this.root.classList.toggle('danger', lit && ratio <= 0.3);
+    this.root.classList.toggle('down', !lit);
   }
 }

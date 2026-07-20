@@ -47,4 +47,36 @@ describe('BaseDefense', () => {
     joining.merge(snapshot, 10_500);
     expect(joining.hp(10_500)).toBe(0);
   });
+
+  it('stays unlit after HP 0 until the gauge fully recovers', () => {
+    const base = new BaseDefense();
+    expect(base.lit(10_000)).toBe(true);
+    base.apply(hit('a', 60, 10_000), 10_000);
+    base.apply(hit('b', 60, 20_000), 20_000);
+    expect(base.lit(20_000)).toBe(false);
+    // 最初の命中が窓から抜けて HP 40 まで回復してもまだ消灯
+    const partial = 10_000 + BASE_DAMAGE_WINDOW_MS;
+    expect(base.hp(partial)).toBe(40);
+    expect(base.lit(partial)).toBe(false);
+    // 全快した瞬間に再点火する
+    const full = 20_000 + BASE_DAMAGE_WINDOW_MS;
+    expect(base.lit(full)).toBe(true);
+  });
+
+  it('does not flicker when HP oscillates around zero', () => {
+    const base = new BaseDefense();
+    expect(base.lit(10_000)).toBe(true);
+    base.apply(hit('a', 100, 10_000), 10_000);
+    expect(base.lit(10_000)).toBe(false);
+    // 回復し切る直前に追撃されると消灯が続く
+    base.apply(hit('b', 10, 10_000 + BASE_DAMAGE_WINDOW_MS - 100), 10_000 + BASE_DAMAGE_WINDOW_MS - 100);
+    expect(base.lit(10_000 + BASE_DAMAGE_WINDOW_MS)).toBe(false);
+  });
+
+  it('a late joiner with partial damage assumes unlit until full recovery', () => {
+    const joiner = new BaseDefense();
+    joiner.merge([hit('a', 30, 50_000)], 50_000);
+    expect(joiner.lit(50_000)).toBe(false);
+    expect(joiner.lit(50_000 + BASE_DAMAGE_WINDOW_MS)).toBe(true);
+  });
 });
