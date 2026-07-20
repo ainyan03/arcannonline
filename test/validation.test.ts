@@ -66,6 +66,14 @@ describe('protocol validation', () => {
       tx: 2,
       ty: 3,
     })).toMatchObject({ npc: `${peerId}:npc:1` });
+
+    expect(parseReliableMessage({ type: 'fires', events: [base, base] }))
+      .toMatchObject({ type: 'fires', events: [{ id: 'fire-1' }, { id: 'fire-1' }] });
+    expect(parseReliableMessage({ type: 'fires', events: [] })).toBeNull();
+    expect(parseReliableMessage({
+      type: 'fires',
+      events: Array.from({ length: 9 }, () => base),
+    })).toBeNull();
   });
 
   it('validates a bounded NPC snapshot batch', () => {

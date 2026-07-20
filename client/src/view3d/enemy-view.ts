@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { NPC_KINDS, type NpcKind, type NpcMode } from '../../../shared/src/protocol';
+import { disposeObject3D } from './dispose';
 
 /** 種別ごとの見た目パラメータ */
 const KIND_LOOKS: Record<
@@ -153,25 +154,7 @@ export class EnemyView {
 
   /** scene から外す際に、このビュー専用の WebGL リソースを解放する。 */
   dispose(): void {
-    const geometries = new Set<THREE.BufferGeometry>();
-    const materials = new Set<THREE.Material>();
-    this.object.traverse((child) => {
-      if ('geometry' in child) {
-        const geometry = (child as THREE.Mesh).geometry;
-        if (geometry) geometries.add(geometry);
-      }
-      if ('material' in child) {
-        const material = (child as THREE.Mesh | THREE.Sprite).material;
-        if (Array.isArray(material)) {
-          for (const item of material) materials.add(item);
-        } else if (material) {
-          materials.add(material);
-        }
-      }
-    });
-    for (const geometry of geometries) geometry.dispose();
-    for (const material of materials) material.dispose();
-    this.hpTexture.dispose();
+    disposeObject3D(this.object);
   }
 
   private redrawHp(): void {

@@ -8,6 +8,23 @@ import {
 const HIT_CACHE_MAX = BASE_SYNC_HITS_MAX * 2;
 const FUTURE_TOLERANCE_MS = 10_000;
 
+/** 送信側時計で保存されたsnapshot命中時刻を、受信側時計へ正規化する。 */
+export function normalizeBaseSnapshotTimes(
+  events: readonly BaseHitEvent[],
+  now: number,
+  observedSkew?: number,
+  sentAt?: number,
+): BaseHitEvent[] {
+  const offset = Number.isFinite(observedSkew)
+    ? (observedSkew as number)
+    : Number.isFinite(sentAt)
+      ? now - (sentAt as number)
+      : 0;
+  return offset === 0
+    ? [...events]
+    : events.map((event) => ({ ...event, at: event.at + offset }));
+}
+
 /**
  * 直近の拠点命中を集合としてマージする、管理者不要の拠点耐久状態。
  * 同じIDは一度しか加算されず、古いダメージは時間経過で自然回復する。

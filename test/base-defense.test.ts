@@ -4,7 +4,10 @@ import {
   BASE_MAX_HP,
   type BaseHitEvent,
 } from '../shared/src/protocol';
-import { BaseDefense } from '../client/src/sim/base-defense';
+import {
+  BaseDefense,
+  normalizeBaseSnapshotTimes,
+} from '../client/src/sim/base-defense';
 
 const npc = `${'a'.repeat(64)}:npc:0`;
 
@@ -80,5 +83,30 @@ describe('BaseDefense', () => {
     joiner.mergeSnapshot([hit('a', 30, 50_000)], false, 50_000);
     expect(joiner.lit(50_000)).toBe(false);
     expect(joiner.lit(50_000 + BASE_DAMAGE_WINDOW_MS)).toBe(true);
+  });
+
+  it('keeps the conservative unlit state regardless of snapshot arrival order', () => {
+    const partial = [hit('a', 30, 50_000)];
+    const a = new BaseDefense();
+    const b = new BaseDefense();
+    a.lit(50_000);
+    b.lit(50_000);
+    a.mergeSnapshot(partial, true, 50_000);
+    a.mergeSnapshot(partial, false, 50_000);
+    b.mergeSnapshot(partial, false, 50_000);
+    b.mergeSnapshot(partial, true, 50_000);
+    expect(a.lit(50_000)).toBe(false);
+    expect(b.lit(50_000)).toBe(false);
+  });
+
+  it('normalizes snapshots before state-based clock skew is available', () => {
+    const sourceNow = 50_000;
+    const receiverNow = 80_000;
+    const events = [hit('a', 30, sourceNow - 5_000)];
+    expect(normalizeBaseSnapshotTimes(events, receiverNow, undefined, sourceNow)[0].at)
+      .toBe(receiverNow - 5_000);
+    // state から得た観測値があれば snapshot 送信時刻より優先する。
+    expect(normalizeBaseSnapshotTimes(events, receiverNow, 30_010, sourceNow)[0].at)
+      .toBe(sourceNow - 5_000 + 30_010);
   });
 });

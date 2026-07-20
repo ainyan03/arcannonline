@@ -6,6 +6,7 @@
 // シナリオ B: 4オーナー混在 = 実戦相当。相殺で弾数が減っていくため
 //   序盤 10 tick だけを測る
 import { BulletEngine } from './engine';
+import { OBSTACLES } from '../../../../shared/src/obstacles';
 
 interface BenchStats {
   mean: number;
@@ -63,6 +64,18 @@ export function benchEngine(
     lines.push(
       `B(実戦相当) ${n.toLocaleString()}発: ${formatStats(stats)}` +
         ` (10tickで ${before.toLocaleString()} → ${engine.aliveCount.toLocaleString()})`,
+    );
+  }
+
+  for (const n of counts) {
+    const engine = new BulletEngine(n + 100, Infinity);
+    engine.setObstacles(OBSTACLES);
+    engine.debugFill(n, 1, 1);
+    for (let i = 0; i < 5; i++) engine.tick();
+    const stats = measure(engine, 100);
+    lines.push(
+      `C(岩判定込み) ${n.toLocaleString()}発: ${formatStats(stats)}` +
+        ` (生存 ${engine.aliveCount.toLocaleString()})`,
     );
   }
 

@@ -6,6 +6,12 @@ import {
 } from '../client/src/net/admission';
 import { ReliableOutbox } from '../client/src/net/reliable-outbox';
 import {
+  FIRE_BATCH_PROTO_VERSION,
+  FireBatchQueue,
+  supportsFireBatch,
+} from '../client/src/net/fire-batch';
+import { MAX_FIRE_BATCH } from '../shared/src/protocol';
+import {
   canResolveCollisionLocally,
   collisionAuthority,
   isAuthorizedCollision,
@@ -54,6 +60,27 @@ describe('network resource controls', () => {
     const sent: string[] = [];
     outbox.drain((data) => sent.push(data));
     expect(sent).toEqual(['new-pex', 'chat']);
+  });
+
+  it('batches rapid fire events up to a bounded reliable payload', () => {
+    const queue = new FireBatchQueue();
+    const event = {
+      id: 'fire', script: 'normal-shot', seed: 1, x: 0, y: 0, dir: 0, at: 1,
+    };
+    for (let i = 0; i < MAX_FIRE_BATCH - 1; i++) {
+      expect(queue.push({ ...event, id: `fire-${i}` })).toBeNull();
+    }
+    const full = queue.push({ ...event, id: 'last' });
+    expect(full).toHaveLength(MAX_FIRE_BATCH);
+    expect(queue.size).toBe(0);
+    queue.push(event);
+    expect(queue.drain()).toEqual([event]);
+  });
+
+  it('falls back to individual fire messages for old or unknown peers', () => {
+    expect(supportsFireBatch(undefined)).toBe(false);
+    expect(supportsFireBatch(FIRE_BATCH_PROTO_VERSION - 1)).toBe(false);
+    expect(supportsFireBatch(FIRE_BATCH_PROTO_VERSION)).toBe(true);
   });
 
   it('selects and verifies one deterministic collision authority', () => {

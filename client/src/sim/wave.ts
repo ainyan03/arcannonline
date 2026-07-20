@@ -1,7 +1,7 @@
 // ウェーブ制の決定論スケジュール。
 // サーバもリーダーも置かず、壁時計 (エポックms) から全クライアントが
 // 独立に同じウェーブ番号・フェーズを算出する。端末間の時計ずれは
-// 高々数秒で、フェーズ境界の見え方がずれるだけに留まる
+// 接続ピア群の中央値へ寄せ、単一端末の大きな時計ずれを抑える
 // (敵の実体は担当ピアの時計に従うため、1体の敵の挙動は常に一貫する)。
 import type { NpcKind } from '../../../shared/src/protocol';
 
@@ -40,6 +40,23 @@ export function waveStateAt(nowMs: number): WaveState {
     phase: assault ? 'assault' : 'calm',
     phaseEndsAt: cycleStart + (assault ? WAVE_ASSAULT_MS : WAVE_CYCLE_MS),
   };
+}
+
+/**
+ * 自分を含むピア群の時計の中央値へローカル時刻を寄せる。
+ * skew は RemotePlayerSim の「自分の受信時刻 - 相手の送信時刻」。自分自身の
+ * skew=0 も標本へ含め、単一の時計異常ピアにウェーブ全体を引きずられにくくする。
+ */
+export function correctedRoomNow(
+  localNow: number,
+  observedSkews: readonly number[],
+): number {
+  const samples = [0, ...observedSkews.filter(Number.isFinite)].sort((a, b) => a - b);
+  const middle = Math.floor(samples.length / 2);
+  const median = samples.length % 2 === 1
+    ? samples[middle]
+    : (samples[middle - 1] + samples[middle]) / 2;
+  return localNow - median;
 }
 
 /**

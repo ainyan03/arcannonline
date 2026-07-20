@@ -116,6 +116,10 @@ export class GameRoom {
     this.mesh.broadcastFire(ev);
   }
 
+  broadcastAutoFire(ev: FireEvent): void {
+    this.mesh.broadcastAutoFire(ev);
+  }
+
   broadcastChat(text: string): void {
     this.mesh.broadcastChat(text);
   }

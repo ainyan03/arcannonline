@@ -30,6 +30,7 @@ import {
   MAX_CONNECTING_PEERS,
   selectPexDialCandidates,
 } from './admission';
+import { FireBatchQueue, supportsFireBatch } from './fire-batch';
 
 /**
  * 他ピアへ申告するプロトコルバージョン。開発ビルド (vite dev) は申告しない:
@@ -45,6 +46,8 @@ const ENV_SEEN_MAX = 2_000;
 const PRESENCE_REPLY_MIN_MS = 2_000;
 /** メッシュ中継封筒の署名検証回数の上限 (検証CPUを浪費させる攻撃の抑止) */
 const MAX_ENV_VERIFY_PER_SEC = 256;
+/** 通常弾をこの時間だけ貯めてReliableメッセージ数を削減する。 */
+const FIRE_BATCH_INTERVAL_MS = 250;
 
 interface PeerEntry {
   peer: Peer;
@@ -52,6 +55,8 @@ interface PeerEntry {
   everOpen: boolean;
   /** 相手が PEX で申告した「直接接続中のピア」一覧 */
   known: Set<string>;
+  /** このピアへまだ送っていない通常弾。接続後に作られたイベントだけを保持する。 */
+  fireBatch: FireBatchQueue;
 }
 
 export class Mesh {
@@ -80,6 +85,7 @@ export class Mesh {
   private readonly peers = new Map<string, PeerEntry>();
   private readonly presenceSeen = new Map<string, number>();
   private readonly envSeen = new Set<string>();
+  private readonly peerVersions = new Map<string, number>();
   private lastPresenceSentAt = 0;
   private envVerifyWindowAt = 0;
   private envVerifyChecks = 0;
@@ -98,6 +104,7 @@ export class Mesh {
       window.setInterval(() => this.publishPresence(false), PRESENCE_INTERVAL_MS),
       window.setInterval(() => this.sendPex(), PEX_INTERVAL_MS),
       window.setInterval(() => this.cleanup(), 5_000),
+      window.setInterval(() => this.flushFireBatches(), FIRE_BATCH_INTERVAL_MS),
     ];
   }
 
@@ -136,7 +143,26 @@ export class Mesh {
 
   broadcastFire(ev: FireEvent): void {
     for (const e of this.peers.values()) {
-      if (e.peer.isOpen) e.peer.sendReliable({ type: 'fire', ev });
+      if (!e.peer.isOpen) continue;
+      // 先に発生した通常弾とのReliable順序を保ってから即時弾を送る。
+      this.flushEntryFireBatch(e);
+      e.peer.sendReliable({ type: 'fire', ev });
+    }
+  }
+
+  /**
+   * 通常弾だけをピア単位で短時間バッチ化する。旧版・版数不明ピアには従来の
+   * fire を送り、プロトコル移行中も弾が見えなくならないようにする。
+   */
+  broadcastAutoFire(ev: FireEvent): void {
+    for (const [id, entry] of this.peers) {
+      if (!entry.peer.isOpen) continue;
+      if (!supportsFireBatch(this.peerVersions.get(id))) {
+        entry.peer.sendReliable({ type: 'fire', ev });
+        continue;
+      }
+      const full = entry.fireBatch.push(ev);
+      if (full) entry.peer.sendReliable({ type: 'fires', events: full });
     }
   }
 
@@ -199,6 +225,7 @@ export class Mesh {
   leave(): void {
     if (this.left) return;
     this.left = true;
+    this.flushFireBatches();
     this.publish({ t: 'bye' });
     for (const id of this.intervalIds) window.clearInterval(id);
     for (const [id, e] of this.peers) {
@@ -223,7 +250,7 @@ export class Mesh {
     if (!content) return;
     switch (content.t) {
       case 'presence':
-        if (content.v !== undefined) this.onPeerVersion?.(from, content.v);
+        if (content.v !== undefined) this.notePeerVersion(from, content.v);
         this.notePeer(from);
         break;
       case 'bye':
@@ -265,6 +292,7 @@ export class Mesh {
     const entry: PeerEntry = {
       everOpen: false,
       known: new Set(),
+      fireBatch: new FireBatchQueue(),
       peer: new Peer(
         this.selfId,
         id,
@@ -340,7 +368,7 @@ export class Mesh {
   private handleReliable(fromId: string, msg: ReliableMessage): void {
     switch (msg.type) {
       case 'pex': {
-        if (msg.v !== undefined) this.onPeerVersion?.(fromId, msg.v);
+        if (msg.v !== undefined) this.notePeerVersion(fromId, msg.v);
         const entry = this.peers.get(fromId);
         if (entry) entry.known = new Set(msg.peers);
         // PEX による発見: リレーに頼らず新しいピアを知る
@@ -381,6 +409,9 @@ export class Mesh {
       case 'fire':
         this.onFire?.(fromId, msg.ev);
         break;
+      case 'fires':
+        for (const event of msg.events) this.onFire?.(fromId, event);
+        break;
       case 'bkill':
         this.onBulletKill?.(String(msg.f), Number(msg.i));
         break;
@@ -411,6 +442,22 @@ export class Mesh {
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) this.sendPexTo(e);
     }
+  }
+
+  private flushFireBatches(): void {
+    for (const entry of this.peers.values()) {
+      this.flushEntryFireBatch(entry);
+    }
+  }
+
+  private flushEntryFireBatch(entry: PeerEntry): void {
+    if (!entry.peer.isOpen || entry.fireBatch.size === 0) return;
+    entry.peer.sendReliable({ type: 'fires', events: entry.fireBatch.drain() });
+  }
+
+  private notePeerVersion(id: string, version: number): void {
+    this.peerVersions.set(id, version);
+    this.onPeerVersion?.(id, version);
   }
 
   private sendPexTo(entry: PeerEntry): void {

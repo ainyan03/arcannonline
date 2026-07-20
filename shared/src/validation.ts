@@ -5,6 +5,7 @@ import {
   FIELD_SIZE,
   MAX_HP,
   MAX_ID_TOKEN_LEN,
+  MAX_FIRE_BATCH,
   MAX_PEERS,
   NPC_KINDS,
   NPCS_PER_PEER,
@@ -288,6 +289,17 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
     case 'fire': {
       const ev = parseFireEvent(v.ev);
       return ev ? { type: 'fire', ev } : null;
+    }
+    case 'fires': {
+      if (
+        !Array.isArray(v.events) ||
+        v.events.length === 0 ||
+        v.events.length > MAX_FIRE_BATCH
+      ) return null;
+      const events = v.events.map(parseFireEvent);
+      return events.every((event): event is FireEvent => event !== null)
+        ? { type: 'fires', events }
+        : null;
     }
     case 'bkill':
       return shortString(v.f, MAX_SIGNAL_ID_LEN) && v.f.length > 0 && integer(v.i, 0, 100_000)

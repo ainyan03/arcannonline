@@ -46,7 +46,7 @@ import { GameAudio } from '../audio/game-audio';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
 import { benchEngine } from '../sim/danmaku/bench';
-import { BaseDefense } from '../sim/base-defense';
+import { BaseDefense, normalizeBaseSnapshotTimes } from '../sim/base-defense';
 import { BulletEngine } from '../sim/danmaku/engine';
 import { ChatUI } from '../ui/chat';
 import { BaseStatusUI } from '../ui/base-status';
@@ -60,6 +60,7 @@ import {
   WAVE_CALM_MS,
   WAVE_COMPOSITION,
   WAVES_PER_ROUND,
+  correctedRoomNow,
   waveAggression,
   waveStateAt,
   type WaveState,
@@ -333,7 +334,7 @@ export class Game {
     // 自機の identicon シード (= ピアID) は room 生成後に判明するため後付け
     this.playerView.setIdSeed(this.room.selfId);
     const npcNow = performance.now();
-    const joinComposition = WAVE_COMPOSITION[waveStateAt(Date.now()).tier];
+    const joinComposition = WAVE_COMPOSITION[waveStateAt(this.roomNow()).tier];
     for (let i = 0; i < NPCS_PER_PEER; i++) {
       const kind = joinComposition[i] ?? 'wisp';
       const sim = new LocalNpcSim(`${this.room.selfId}:npc:${i}`, npcNow, kind);
@@ -439,14 +440,7 @@ export class Game {
       // 自分の時計へ再変換してから取り込む。state がまだ届いておらず時計ずれを
       // 推定できない場合は、snapshot の送信時刻から各命中の経過時間を復元する。
       const skew = this.remotes.get(id)?.sim.clockSkewMin;
-      const offset = Number.isFinite(skew)
-        ? (skew as number)
-        : Number.isFinite(sentAt)
-          ? Date.now() - (sentAt as number)
-          : 0;
-      const adjusted = offset === 0
-        ? hits
-        : hits.map((event) => ({ ...event, at: event.at + offset }));
+      const adjusted = normalizeBaseSnapshotTimes(hits, Date.now(), skew, sentAt);
       this.baseDefense.mergeSnapshot(adjusted, lit);
     };
     this.room.onChat = (id, text) => {
@@ -612,6 +606,10 @@ export class Game {
     this.input.dispose();
     this.chat.dispose();
     this.audio.dispose();
+    this.playerView.dispose();
+    for (const remote of this.remotes.values()) remote.view.dispose();
+    for (const npc of this.localNpcs) npc.view.dispose();
+    for (const npc of this.remoteNpcs.values()) npc.view.dispose();
     this.room.leave();
   }
 
@@ -775,7 +773,7 @@ export class Game {
     const dt = Math.min(Math.max((now - this.lastNpcUpdate) / 1000, 0), 0.25);
     if (dt <= 0) return;
     this.lastNpcUpdate = now;
-    const wave = waveStateAt(Date.now());
+    const wave = waveStateAt(this.roomNow());
     this.announceWaveTransition(wave);
     const waveMod = {
       respawnPaused: wave.phase === 'calm',
@@ -1135,7 +1133,7 @@ export class Game {
         y: sourceVelocity.y * BULLET_INHERIT_VELOCITY,
       },
     );
-    this.room.broadcastFire(ev);
+    this.room.broadcastAutoFire(ev);
     this.audio.playAutoFire();
   }
 
@@ -1428,6 +1426,7 @@ export class Game {
     if (!remote) return;
     this.remotes.delete(id);
     this.world.scene.remove(remote.view.object);
+    remote.view.dispose();
     if (this.targetId === id) {
       this.targetId = null;
       this.updateHud();
@@ -1489,13 +1488,22 @@ export class Game {
   }
 
   private waveHudLine(): string {
-    const wave = this.lastWave ?? waveStateAt(Date.now());
-    const remain = Math.max(0, Math.ceil((wave.phaseEndsAt - Date.now()) / 1000));
+    const now = this.roomNow();
+    const wave = this.lastWave ?? waveStateAt(now);
+    const remain = Math.max(0, Math.ceil((wave.phaseEndsAt - now) / 1000));
     if (wave.phase === 'assault') {
       return `wave: 第${wave.number}波 襲来中 (残り${remain}s)`;
     }
     const nextNumber = (wave.number % WAVES_PER_ROUND) + 1;
     return `wave: 小休止 (第${nextNumber}波まで ${remain}s)`;
+  }
+
+  /** 接続中ピアの時計ずれ中央値へ寄せた、ウェーブ進行用のルーム時刻。 */
+  private roomNow(): number {
+    return correctedRoomNow(
+      Date.now(),
+      [...this.remotes.values()].map((remote) => remote.sim.clockSkewMin),
+    );
   }
 
   private updateHud(): void {

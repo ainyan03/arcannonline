@@ -4,6 +4,7 @@ import {
   WAVE_CALM_MS,
   WAVE_CYCLE_MS,
   WAVES_PER_ROUND,
+  correctedRoomNow,
   waveAggression,
   waveStateAt,
 } from '../client/src/sim/wave';
@@ -48,6 +49,19 @@ describe('waveAggression', () => {
     for (let d = 1; d < WAVES_PER_ROUND; d++) {
       expect(waveAggression(d)).toBeGreaterThan(waveAggression(d - 1));
     }
+  });
+});
+
+describe('correctedRoomNow', () => {
+  it('makes two skewed clients converge on the same midpoint clock', () => {
+    const actual = 1_000_000;
+    const a = correctedRoomNow(actual, [-30_000]);
+    const b = correctedRoomNow(actual + 30_000, [30_000]);
+    expect(a).toBe(b);
+  });
+
+  it('resists one extreme clock when the majority is near local time', () => {
+    expect(correctedRoomNow(1_000_000, [20, -60_000])).toBe(1_000_000);
   });
 });
 

@@ -114,6 +114,24 @@ describe('BulletEngine', () => {
     expect(engine.aliveCount).toBe(0);
   });
 
+  it('keeps obstacle results identical between live and delayed replay', () => {
+    const obstacle = [{ x: 2, y: 0, r: 0.5 }];
+    const source = 'fire(0, 60, 1, 0.2, 1);';
+    const live = new BulletEngine();
+    live.setObstacles(obstacle);
+    live.startScript(source, 1, () => ({ x: 0, y: 0 }), 0, 'owner');
+    for (let i = 0; i < 4; i++) live.tick();
+
+    const delayed = new BulletEngine();
+    delayed.setObstacles(obstacle);
+    delayed.startScript(
+      source, 1, () => ({ x: 0, y: 0 }), 0, 'owner', undefined, 4, 'late',
+    );
+    expect(delayed.aliveCount).toBe(live.aliveCount);
+    expect(delayed.bullets.filter((bullet) => bullet.alive))
+      .toEqual(live.bullets.filter((bullet) => bullet.alive));
+  });
+
   it('keeps kills and collision damage that arrive before bullet creation', () => {
     const killed = new BulletEngine();
     killed.killByFire('late-fire', 0);

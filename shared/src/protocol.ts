@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 18;
+export const PROTO_VERSION = 19;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -64,6 +64,8 @@ export const FIRE_COOLDOWN_MS = 400;
 export const AUTO_SHOT_COOLDOWN_MS = 100;
 /** 通常ショットが自動発射される索敵距離 (弾の射程とほぼ揃える) */
 export const AUTO_SHOT_RANGE = 40;
+/** 1つのReliableメッセージへまとめる通常弾イベント上限 */
+export const MAX_FIRE_BATCH = 8;
 
 /** 発射時に弾へ引き継ぐ自機速度の割合 */
 export const BULLET_INHERIT_VELOCITY = 0.5;
@@ -314,6 +316,8 @@ export type ReliableMessage =
   | { type: 'pex'; peers: string[]; v?: number }
   | { type: 'sig'; env: SignalEnvelope }
   | { type: 'fire'; ev: FireEvent }
+  /** 高頻度の通常弾を短時間まとめたもの。各イベントの時刻・seedは個別に保持する */
+  | { type: 'fires'; events: FireEvent[] }
   /**
    * 弾の消滅通知 (被弾で消費した弾など)。弾は「発射イベントID f + その
    * スクリプトが何発目に生成したか i」で全クライアント共通に特定できる

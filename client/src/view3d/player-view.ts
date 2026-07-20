@@ -6,6 +6,7 @@ import {
   HEAD_ANCHOR_Y,
   NameLabel,
 } from './avatar';
+import { disposeObject3D } from './dispose';
 
 /**
  * プレイヤー1体の 3D 表示。sim 層の姿勢 (2D 座標 + 向き) を受け取って
@@ -156,6 +157,13 @@ export class PlayerView {
     }
     this.lastEnergyFraction = f;
     this.redraw();
+  }
+
+  dispose(): void {
+    // 読み込み中のavatar画像が後から破棄済みCanvasへ反映されないよう無効化する。
+    this.avatarRevision++;
+    this.label.clearAvatar();
+    disposeObject3D(this.object);
   }
 
   private redraw(): void {
