@@ -107,6 +107,14 @@ export class GameAudio {
     this.tone(1320, at + 0.065, 0.12, 0.065, 'sine', 1174.66);
   }
 
+  /** 通常ショット (自動発射)。連続で鳴り続けるため強攻撃より短く控えめにする */
+  playAutoFire(): void {
+    if (!this.canPlay('auto-fire', 150)) return;
+    const ctx = this.ready();
+    if (!ctx) return;
+    this.tone(560, ctx.currentTime, 0.05, 0.03, 'triangle', 760);
+  }
+
   playFire(): void {
     if (!this.canPlay('fire', 90)) return;
     const ctx = this.ready();

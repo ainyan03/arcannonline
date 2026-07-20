@@ -5,12 +5,16 @@ import * as THREE from 'three';
 import {
   DANMAKU_SCRIPTS,
   DEFAULT_SCRIPT_ID,
+  NORMAL_SHOT_SCRIPT_ID,
+  NORMAL_SHOT_SCRIPT_SOURCE,
 } from '../../../shared/src/danmaku-scripts';
 import {
   NPC_FIRE_SCRIPT_ID,
   NPC_FIRE_SCRIPT_SOURCE,
 } from '../../../shared/src/npc-scripts';
 import {
+  AUTO_SHOT_COOLDOWN_MS,
+  AUTO_SHOT_RANGE,
   BASE_HIT_RADIUS,
   BASE_ID,
   BASE_MAX_HP,
@@ -148,6 +152,7 @@ export class Game {
   private lastNpcSentAt = 0;
   private scriptId = DEFAULT_SCRIPT_ID;
   private lastFireAt = 0;
+  private lastAutoFireAt = 0;
   private fireHeld = false;
   private downAt = 0;
   private downX = 0;
@@ -580,6 +585,8 @@ export class Game {
 
     // 仮想発射ボタンの長押し連射 (クールダウンは fire() 側で効く)
     if (this.fireHeld) this.fire();
+    // 通常ショット: 索敵距離内に敵がいれば自動発射 (エネルギー消費なし)
+    this.autoFire(now);
 
     this.updateNpcsToNow(now);
     this.tickToNow(now);
@@ -943,6 +950,80 @@ export class Game {
     this.audio.playFire();
   }
 
+  /**
+   * 通常ショット: 索敵距離内で最も近い敵へ自動発射する基本攻撃。
+   * エネルギーを消費せず、強攻撃 (fire) とは独立したクールダウンで動く。
+   * 単発の即時完了スクリプトなので、多段シーケンス保護の ownerHasRun
+   * ゲートは通さない (強攻撃の展開中でも通常ショットは撃てる)
+   */
+  private autoFire(now: number): void {
+    if (now - this.lastAutoFireAt < AUTO_SHOT_COOLDOWN_MS) return;
+    const target = this.nearestEnemy(AUTO_SHOT_RANGE);
+    if (!target) return;
+    this.lastAutoFireAt = now;
+
+    const origin = { x: this.player.pos.x, y: this.player.pos.y };
+    const sourceVelocity = this.player.getVelocity();
+    const targetPos = target.pos;
+    const seed = (Math.random() * 0x100000000) >>> 0;
+    const ev: FireEvent = {
+      id: crypto.randomUUID(),
+      script: NORMAL_SHOT_SCRIPT_ID,
+      seed,
+      x: origin.x,
+      y: origin.y,
+      dir: this.player.heading,
+      vx: sourceVelocity.x,
+      vy: sourceVelocity.y,
+      at: Date.now(),
+      target: target.id,
+      tx: targetPos.x,
+      ty: targetPos.y,
+    };
+    this.seenFireIds.add(ev.id);
+    this.engine.startScript(
+      NORMAL_SHOT_SCRIPT_SOURCE,
+      ev.seed,
+      () => origin,
+      ev.dir,
+      this.room.selfId,
+      () => targetPos,
+      0,
+      ev.id,
+      {
+        x: sourceVelocity.x * BULLET_INHERIT_VELOCITY,
+        y: sourceVelocity.y * BULLET_INHERIT_VELOCITY,
+      },
+    );
+    this.room.broadcastFire(ev);
+    this.audio.playAutoFire();
+  }
+
+  /** 生存中の敵 (自分担当・リモート担当とも) から最も近いものを拾う */
+  private nearestEnemy(maxDist: number): { id: string; pos: Vec2 } | null {
+    const px = this.player.pos.x;
+    const py = this.player.pos.y;
+    let best: { id: string; pos: Vec2 } | null = null;
+    let bestDist = maxDist;
+    for (const npc of this.localNpcs) {
+      if (!npc.sim.alive) continue;
+      const d = Math.hypot(npc.sim.pos.x - px, npc.sim.pos.y - py);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { id: npc.sim.id, pos: { x: npc.sim.pos.x, y: npc.sim.pos.y } };
+      }
+    }
+    for (const [id, npc] of this.remoteNpcs) {
+      if (npc.sim.mode === 'dead') continue;
+      const d = Math.hypot(npc.sim.lastX - px, npc.sim.lastY - py);
+      if (d < bestDist) {
+        bestDist = d;
+        best = { id, pos: { x: npc.sim.lastX, y: npc.sim.lastY } };
+      }
+    }
+    return best;
+  }
+
   private handleRemoteFire(fromId: string, ev: FireEvent): void {
     if (ev.npc && !npcBelongsToPeer(ev.npc, fromId)) return;
     if (this.seenFireIds.has(ev.id)) return;
@@ -953,7 +1034,11 @@ export class Game {
     }
     const source =
       DANMAKU_SCRIPTS[ev.script]?.source ??
-      (ev.script === NPC_FIRE_SCRIPT_ID ? NPC_FIRE_SCRIPT_SOURCE : null);
+      (ev.script === NPC_FIRE_SCRIPT_ID
+        ? NPC_FIRE_SCRIPT_SOURCE
+        : ev.script === NORMAL_SHOT_SCRIPT_ID
+          ? NORMAL_SHOT_SCRIPT_SOURCE
+          : null);
     if (!source) return;
     // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える。
     // ev.at は相手の時計なので、位置同期から推定した時計ずれを差し引いて
@@ -1286,7 +1371,7 @@ export class Game {
       `enemies: ${this.localNpcs.filter((npc) => npc.sim.alive).length}` +
       ` local / ${this.remoteNpcs.size} remote\n` +
       `bullets: ${this.engine.aliveCount} fps: ${this.fps}\n` +
-      `[Space]発射 [1-4]魔法切替: ${scriptName}\n` +
+      `[Space]強攻撃 [1-4]切替: ${scriptName} (通常ショットは自動)\n` +
       `[Enter]チャット\n` +
       `target: ${targetName}`;
   }

@@ -21,17 +21,29 @@ export interface DanmakuScript {
   source: string;
 }
 
-// 同梱スクリプトは「1回の発射 = 1セット」を基本とする。連射量は発射ボタンの
-// 長押し (クールダウン毎に再発射、離せば停止) でユーザーが制御する。
+/**
+ * 通常ショット: 近くの敵へ自動発射される、エネルギーを消費しない基本攻撃。
+ * DANMAKU_SCRIPTS (強攻撃の選択肢) には含めず、ID で直接参照する。
+ * ウィスプ (HP 24) を3発で倒せる耐久度。射程 ≒ 速度28 × 1.6秒 ≒ 45
+ */
+export const NORMAL_SHOT_SCRIPT_ID = 'normal-shot';
+export const NORMAL_SHOT_SCRIPT_SOURCE = `
+fire(aim, 28, 8, 0.2, 1.6);
+`;
+
+// 同梱スクリプトは「強攻撃」— エネルギーを消費する代わりに敵 (HP 24) を
+// 一撃〜数発で倒せる火力を持つ。「1回の発射 = 1セット」を基本とし、連射量は
+// 発射ボタンの長押し (クールダウン毎に再発射、離せば停止) でユーザーが制御する。
 // 多段シーケンスも DSL としては書ける (spiral が見本)。
 export const DANMAKU_SCRIPTS: Record<string, DanmakuScript> = {
   ring: {
     name: '全方位リング',
     source: `
+// 周囲一掃: 全方位を一撃で薙ぎ払う大技 (ほぼ全エネルギーを使う)
 let n = 24;
 let i = 0;
 loop (n) {
-  fire(dir + i * 360 / n, 12, 2, 0.25);
+  fire(dir + i * 360 / n, 12, 24, 0.25);
   i = i + 1;
 }
 `,
@@ -39,11 +51,11 @@ loop (n) {
   spiral: {
     name: '双腕スパイラル',
     source: `
-// シーケンス型の見本: 約1回転ぶん回りながら撃つ
+// シーケンス型の見本: 約1回転ぶん回りながら撃つ (2発で撃破の面制圧)
 let a = dir;
 loop (26) {
-  fire(a, 10, 1, 0.2);
-  fire(a + 180, 10, 1, 0.2);
+  fire(a, 10, 12, 0.2);
+  fire(a + 180, 10, 12, 0.2);
   a = a + 14;
   wait(2);
 }
@@ -52,18 +64,19 @@ loop (26) {
   spray: {
     name: '前方ショット',
     source: `
+// 前方の敵をまとめて一撃で倒す近〜中距離ショット
 loop (6) {
-  fire(dir + rand(0 - 25, 25), rand(10, 18), 1, 0.18);
+  fire(dir + rand(0 - 25, 25), rand(10, 18), 24, 0.18);
 }
 `,
   },
   aimshot: {
     name: '狙い3way',
     source: `
-    // aim は発射時点で固定したターゲット方向
-fire(aim - 10, 16, 1, 0.2);
-fire(aim, 18, 2, 0.22);
-fire(aim + 10, 16, 1, 0.2);
+    // aim は発射時点で固定したターゲット方向。中央弾は一撃で撃破できる
+fire(aim - 10, 16, 12, 0.2);
+fire(aim, 18, 24, 0.22);
+fire(aim + 10, 16, 12, 0.2);
 `,
   },
 };

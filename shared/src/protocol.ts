@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 7;
+export const PROTO_VERSION = 8;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -59,6 +59,11 @@ export const MAX_BULLETS = 8192;
 
 /** 発射のクールダウン */
 export const FIRE_COOLDOWN_MS = 400;
+
+/** 通常ショット (自動発射・エネルギー消費なし) の発射間隔 */
+export const AUTO_SHOT_COOLDOWN_MS = 400;
+/** 通常ショットが自動発射される索敵距離 (弾の射程とほぼ揃える) */
+export const AUTO_SHOT_RANGE = 40;
 
 /** 発射時に弾へ引き継ぐ自機速度の割合 */
 export const BULLET_INHERIT_VELOCITY = 0.5;
@@ -217,7 +222,7 @@ export const ENERGY_REGEN_PER_SEC = 15;
 
 /** 1発あたりのコスト係数: base + perDur×(耐久-1) + perRadius×max(半径-基準, 0) */
 export const BULLET_COST_BASE = 0.5;
-export const BULLET_COST_PER_DUR = 0.5;
+export const BULLET_COST_PER_DUR = 0.2;
 export const BULLET_COST_PER_RADIUS = 4;
 /** コスト計算の基準半径 (= fire() の既定半径) */
 export const BULLET_BASE_RADIUS = 0.2;

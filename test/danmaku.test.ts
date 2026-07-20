@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DANMAKU_SCRIPTS } from '../shared/src/danmaku-scripts';
+import {
+  DANMAKU_SCRIPTS,
+  NORMAL_SHOT_SCRIPT_SOURCE,
+} from '../shared/src/danmaku-scripts';
 import { BulletEngine } from '../client/src/sim/danmaku/engine';
 
 describe('BulletEngine', () => {
@@ -9,6 +12,9 @@ describe('BulletEngine', () => {
       expect(engine.estimateCost(spell.source, 1, 0, () => ({ x: 0, y: 0 })))
         .not.toBeNull();
     }
+    expect(
+      engine.estimateCost(NORMAL_SHOT_SCRIPT_SOURCE, 1, 0, () => ({ x: 0, y: 0 })),
+    ).not.toBeNull();
   });
 
   it('replays the same frozen event deterministically', () => {
