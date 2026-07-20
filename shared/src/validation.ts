@@ -6,7 +6,7 @@ import {
   MAX_HP,
   MAX_ID_TOKEN_LEN,
   MAX_PEERS,
-  NPC_MAX_HP,
+  NPC_KINDS,
   NPCS_PER_PEER,
   PLAYER_SPEED,
   type Appearance,
@@ -15,6 +15,7 @@ import {
   type BulletRef,
   type FireEvent,
   type NostrContent,
+  type NpcKind,
   type NpcStatePayload,
   type RealtimeMessage,
   type ReliableMessage,
@@ -109,7 +110,9 @@ export function parseNpcStatePayload(value: unknown): NpcStatePayload | null {
   if (!finite(v.vx, -32, 32) || !finite(v.vy, -32, 32) || !finite(v.h, -Math.PI * 2, Math.PI * 2)) {
     return null;
   }
-  if (!finite(v.hp, 0, NPC_MAX_HP) || !finite(v.ts, 0, 10_000_000_000_000)) return null;
+  if (v.k !== undefined && !(typeof v.k === 'string' && v.k in NPC_KINDS)) return null;
+  const kind = (v.k as NpcKind | undefined) ?? 'wisp';
+  if (!finite(v.hp, 0, NPC_KINDS[kind].maxHp) || !finite(v.ts, 0, 10_000_000_000_000)) return null;
   if (!['spawn', 'wander', 'chase', 'attack', 'dead'].includes(String(v.mode))) return null;
   return {
     id: v.id,
@@ -122,6 +125,7 @@ export function parseNpcStatePayload(value: unknown): NpcStatePayload | null {
     hp: v.hp,
     mode: v.mode as NpcStatePayload['mode'],
     ts: v.ts,
+    k: v.k as NpcKind | undefined,
   };
 }
 

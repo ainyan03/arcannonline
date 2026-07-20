@@ -3,6 +3,7 @@
 // 独立に同じウェーブ番号・フェーズを算出する。端末間の時計ずれは
 // 高々数秒で、フェーズ境界の見え方がずれるだけに留まる
 // (敵の実体は担当ピアの時計に従うため、1体の敵の挙動は常に一貫する)。
+import type { NpcKind } from '../../../shared/src/protocol';
 
 /** 襲来フェーズの長さ */
 export const WAVE_ASSAULT_MS = 75_000;
@@ -48,3 +49,15 @@ export function waveStateAt(nowMs: number): WaveState {
 export function waveAggression(tier: number): number {
   return 1 + tier * 0.25;
 }
+
+/**
+ * ウェーブ段階ごとの敵編成 (スロット順)。波が進むほど特殊型が混ざる。
+ * 倒された敵は次の再出現からこの編成に従う (生存中の敵は変化しない)
+ */
+export const WAVE_COMPOSITION: readonly (readonly NpcKind[])[] = [
+  ['wisp', 'wisp', 'wisp', 'wisp'],
+  ['wisp', 'wisp', 'wisp', 'rusher'],
+  ['wisp', 'wisp', 'rusher', 'turret'],
+  ['wisp', 'rusher', 'turret', 'shield'],
+  ['rusher', 'rusher', 'turret', 'shield'],
+];

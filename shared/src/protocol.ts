@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 12;
+export const PROTO_VERSION = 13;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -175,8 +175,24 @@ export const INVULN_MS = 2_000;
 export const NPCS_PER_PEER = 4;
 /** NPC状態の送信間隔 (5Hz) */
 export const NPC_STATE_INTERVAL_MS = 200;
-export const NPC_MAX_HP = 24;
 export const NPC_RESPAWN_MS = 6_000;
+
+/**
+ * 敵の種別。担当ピアがウェーブ編成から決めて state の k で申告する。
+ * 受信側は k に応じた見た目と HP 上限で扱う (省略時は wisp = 旧クライアント互換)
+ */
+export type NpcKind = 'wisp' | 'rusher' | 'turret' | 'shield';
+
+/** 種別ごとの共有パラメータ (HP 上限は state 検証と HP バー表示に使う) */
+export const NPC_KINDS: Record<NpcKind, { name: string; maxHp: number }> = {
+  wisp: { name: 'ウィスプ', maxHp: 24 },
+  rusher: { name: 'インプ', maxHp: 14 },
+  turret: { name: 'ガーゴイル', maxHp: 40 },
+  shield: { name: 'ゴーレム', maxHp: 64 },
+};
+
+/** 既定種別 (wisp) の HP。旧来の定数名は互換のため残す */
+export const NPC_MAX_HP = NPC_KINDS.wisp.maxHp;
 
 // --- 共通拠点 ---------------------------------------------------------------
 
@@ -212,6 +228,8 @@ export interface NpcStatePayload {
   hp: number;
   mode: NpcMode;
   ts: number;
+  /** 敵の種別 (省略時は wisp) */
+  k?: NpcKind;
 }
 
 /** 非信頼・非順序チャネル上のリアルタイムメッセージ */

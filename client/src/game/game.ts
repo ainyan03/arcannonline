@@ -10,7 +10,9 @@ import {
 } from '../../../shared/src/danmaku-scripts';
 import {
   NPC_FIRE_SCRIPT_ID,
-  NPC_FIRE_SCRIPT_SOURCE,
+  NPC_RUSHER_SCRIPT_ID,
+  NPC_SCRIPT_SOURCES,
+  NPC_TURRET_SCRIPT_ID,
 } from '../../../shared/src/npc-scripts';
 import {
   AUTO_SHOT_COOLDOWN_MS,
@@ -23,6 +25,7 @@ import {
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
   MAX_HP,
+  NPC_KINDS,
   NPC_STATE_INTERVAL_MS,
   NPCS_PER_PEER,
   PROTO_VERSION,
@@ -31,6 +34,7 @@ import {
   type Appearance,
   type BaseHitEvent,
   type FireEvent,
+  type NpcKind,
   type Vec2,
 } from '../../../shared/src/protocol';
 import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
@@ -53,6 +57,7 @@ import { LocalPlayerSim } from '../sim/local-player';
 import { isInFront } from '../sim/targeting';
 import {
   WAVE_CALM_MS,
+  WAVE_COMPOSITION,
   WAVES_PER_ROUND,
   waveAggression,
   waveStateAt,
@@ -61,7 +66,6 @@ import {
 import { RemotePlayerSim } from '../sim/remote-player';
 import {
   LocalNpcSim,
-  NPC_HIT_RADIUS,
   RemoteNpcSim,
   type NpcAttack,
   type NpcTarget,
@@ -318,9 +322,11 @@ export class Game {
     // 自機の identicon シード (= ピアID) は room 生成後に判明するため後付け
     this.playerView.setIdSeed(this.room.selfId);
     const npcNow = performance.now();
+    const joinComposition = WAVE_COMPOSITION[waveStateAt(Date.now()).tier];
     for (let i = 0; i < NPCS_PER_PEER; i++) {
-      const sim = new LocalNpcSim(`${this.room.selfId}:npc:${i}`, npcNow);
-      const view = new EnemyView(sim.id, true);
+      const kind = joinComposition[i] ?? 'wisp';
+      const sim = new LocalNpcSim(`${this.room.selfId}:npc:${i}`, npcNow, kind);
+      const view = new EnemyView(sim.id, true, kind);
       view.sync(sim.pos.x, sim.pos.y, sim.heading);
       this.localNpcs.push({ sim, view });
       this.world.scene.add(view.object);
@@ -379,13 +385,14 @@ export class Game {
           npc = {
             ownerId,
             sim: new RemoteNpcSim(state.id, now),
-            view: new EnemyView(state.id, false),
+            view: new EnemyView(state.id, false, state.k ?? 'wisp'),
           };
           this.remoteNpcs.set(state.id, npc);
           this.world.scene.add(npc.view.object);
         }
         const wasAlive = existed && npc.sim.mode !== 'dead';
         npc.sim.push(state, now);
+        this.ensureNpcViewKind(npc, false);
         npc.view.setState(state.hp, state.mode);
         if (wasAlive && state.mode === 'dead') {
           this.particles.burst(state.x, state.y, new THREE.Color(0x9b63da), 1.2);
@@ -673,12 +680,13 @@ export class Game {
     }
 
     for (const npc of this.localNpcs) {
+      this.ensureNpcViewKind(npc, true);
       npc.view.setState(npc.sim.hp, npc.sim.mode);
       npc.view.sync(npc.sim.pos.x, npc.sim.pos.y, npc.sim.heading, npc.sim.alive);
       npc.view.animate(now);
       if (npc.sim.alive) {
         this.markerTargets.set(npc.sim.id, {
-          name: 'ウィスプ',
+          name: NPC_KINDS[npc.sim.kind].name,
           x: npc.sim.pos.x,
           z: npc.sim.pos.y,
           kind: 'enemy',
@@ -695,12 +703,13 @@ export class Game {
     }
     for (const npc of this.remoteNpcs.values()) {
       const s = npc.sim.sample(now);
+      this.ensureNpcViewKind(npc, false);
       npc.view.setState(npc.sim.hp, npc.sim.mode);
       npc.view.sync(s.x, s.y, s.h, s.visible);
       npc.view.animate(now);
       if (s.visible) {
         this.markerTargets.set(npc.sim.id, {
-          name: 'ウィスプ',
+          name: NPC_KINDS[npc.sim.kind].name,
           x: s.x,
           z: s.y,
           kind: 'enemy',
@@ -744,6 +753,7 @@ export class Game {
     const waveMod = {
       respawnPaused: wave.phase === 'calm',
       aggression: waveAggression(wave.tier),
+      kinds: WAVE_COMPOSITION[wave.tier],
     };
     // 拠点防衛ループ: 敵はプレイヤーではなく中央の魔力灯を主目標にする。
     const targets: NpcTarget[] = [{ id: BASE_ID, pos: { x: 0, y: 0 } }];
@@ -770,15 +780,31 @@ export class Game {
     }
   }
 
+  /** 再出現で種別が変わった敵のビューを作り直す */
+  private ensureNpcViewKind(
+    npc: { sim: { id: string; kind: NpcKind }; view: EnemyView },
+    local: boolean,
+  ): void {
+    if (npc.view.kind === npc.sim.kind) return;
+    this.world.scene.remove(npc.view.object);
+    npc.view = new EnemyView(npc.sim.id, local, npc.sim.kind);
+    this.world.scene.add(npc.view.object);
+  }
+
   private fireNpc(npc: LocalNpcSim, attack: NpcAttack): void {
     const origin = { x: npc.pos.x, y: npc.pos.y };
     const dir = Math.atan2(
       attack.targetPos.y - origin.y,
       attack.targetPos.x - origin.x,
     );
+    const script = attack.explode
+      ? NPC_RUSHER_SCRIPT_ID
+      : npc.kind === 'turret'
+        ? NPC_TURRET_SCRIPT_ID
+        : NPC_FIRE_SCRIPT_ID;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
-      script: NPC_FIRE_SCRIPT_ID,
+      script,
       seed: (Math.random() * 0x100000000) >>> 0,
       x: origin.x,
       y: origin.y,
@@ -791,7 +817,7 @@ export class Game {
     };
     this.seenFireIds.add(ev.id);
     this.engine.startScript(
-      NPC_FIRE_SCRIPT_SOURCE,
+      NPC_SCRIPT_SOURCES[script],
       ev.seed,
       () => origin,
       dir,
@@ -800,6 +826,10 @@ export class Game {
       0,
       ev.id,
     );
+    if (attack.explode) {
+      // 自爆の消滅演出 (リモート側は mode=dead 遷移の既存演出で光る)
+      this.particles.burst(origin.x, origin.y, new THREE.Color(0xffb347), 1.4);
+    }
     this.room.broadcastFire(ev);
     this.audio.playEnemyFire(
       Math.hypot(origin.x - this.player.pos.x, origin.y - this.player.pos.y),
@@ -852,14 +882,14 @@ export class Game {
       this.engine.forEachNearby(
         npc.sim.pos.x,
         npc.sim.pos.y,
-        NPC_HIT_RADIUS,
+        npc.sim.hitRadius,
         (bullet, index) => {
           if (defeated) return;
           // 共通敵同士ではダメージを与えない。
           if (isNpcId(bullet.owner)) return;
           const dx = bullet.x - npc.sim.pos.x;
           const dy = bullet.y - npc.sim.pos.y;
-          const rr = bullet.radius + NPC_HIT_RADIUS;
+          const rr = bullet.radius + npc.sim.hitRadius;
           if (dx * dx + dy * dy > rr * rr) return;
           const died = npc.sim.takeHit(bullet.dur, now);
           this.engine.killAt(index);
@@ -1098,11 +1128,8 @@ export class Game {
     }
     const source =
       DANMAKU_SCRIPTS[ev.script]?.source ??
-      (ev.script === NPC_FIRE_SCRIPT_ID
-        ? NPC_FIRE_SCRIPT_SOURCE
-        : ev.script === NORMAL_SHOT_SCRIPT_ID
-          ? NORMAL_SHOT_SCRIPT_SOURCE
-          : null);
+      NPC_SCRIPT_SOURCES[ev.script] ??
+      (ev.script === NORMAL_SHOT_SCRIPT_ID ? NORMAL_SHOT_SCRIPT_SOURCE : null);
     if (!source) return;
     // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える。
     // ev.at は相手の時計なので、位置同期から推定した時計ずれを差し引いて
@@ -1430,7 +1457,11 @@ export class Game {
     );
     const targetName = this.targetId
       ? (isNpcId(this.targetId)
-          ? 'ウィスプ'
+          ? NPC_KINDS[
+              this.localNpcs.find((npc) => npc.sim.id === this.targetId)?.sim.kind ??
+                this.remoteNpcs.get(this.targetId)?.sim.kind ??
+                'wisp'
+            ].name
           : (this.remotes.get(this.targetId)?.sim.name ?? '?'))
       : 'なし (クリックで指定)';
     this.hud.textContent =

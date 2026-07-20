@@ -1,18 +1,76 @@
 import {
   FIELD_SIZE,
+  NPC_KINDS,
   NPC_MAX_HP,
   NPC_RESPAWN_MS,
+  type NpcKind,
   type NpcMode,
   type NpcStatePayload,
   type Vec2,
 } from '../../../shared/src/protocol';
 import { mulberry32 } from './danmaku/rng';
 
-const NPC_SPEED = 3.6;
 const NPC_BOUND = FIELD_SIZE / 2 - 4;
-const CHASE_RANGE = 80;
-const ATTACK_RANGE = 27;
-const DESIRED_RANGE = 11;
+
+/** 種別ごとの AI パラメータ (担当ピアのみ使用。HP 上限は NPC_KINDS が正本) */
+const KIND_PARAMS: Record<
+  NpcKind,
+  {
+    speed: number;
+    chaseRange: number;
+    attackRange: number;
+    desiredRange: number;
+    /** 攻撃間隔の基準とゆらぎ (ms)。rusher は自爆のため未使用 */
+    attackBaseMs: number;
+    attackJitterMs: number;
+    /**
+     * プレイヤー弾が当たる判定半径。見た目よりやや大きめにして、
+     * リモートNPCの表示遅延 (補間280ms) や担当ピア側との位置ずれがあっても
+     * 「狙って撃ったのにすり抜ける」体感を減らす
+     */
+    hitRadius: number;
+  }
+> = {
+  wisp: {
+    speed: 3.6,
+    chaseRange: 80,
+    attackRange: 27,
+    desiredRange: 11,
+    attackBaseMs: 2_400,
+    attackJitterMs: 1_200,
+    hitRadius: 1.2,
+  },
+  // 突進型: 高速で肉薄し、attackRange まで近づくと自爆して弾リングを撒く
+  rusher: {
+    speed: 6.6,
+    chaseRange: 110,
+    attackRange: 2.6,
+    desiredRange: 0,
+    attackBaseMs: 0,
+    attackJitterMs: 0,
+    hitRadius: 1.1,
+  },
+  // 砲台型: ほぼ居座り、遠距離から重い狙い弾を撃つ
+  turret: {
+    speed: 1.2,
+    chaseRange: 90,
+    attackRange: 42,
+    desiredRange: 34,
+    attackBaseMs: 3_600,
+    attackJitterMs: 1_400,
+    hitRadius: 1.6,
+  },
+  // 重装型: 硬くて遅い盾。攻撃は控えめ
+  shield: {
+    speed: 2.2,
+    chaseRange: 80,
+    attackRange: 20,
+    desiredRange: 8,
+    attackBaseMs: 4_200,
+    attackJitterMs: 1_600,
+    hitRadius: 1.6,
+  },
+};
 /**
  * スナップショットの遅延再生量。送信間隔 (NPC_STATE_INTERVAL_MS=200ms) より
  * 長くしないと補間の挟み込みが成立せず、200ms ごとのステップ移動になる
@@ -21,12 +79,6 @@ const INTERP_DELAY_MS = 280;
 /** 未来側スナップショット未着時に速度で外挿する上限 */
 const EXTRAPOLATE_MAX_MS = 200;
 
-/**
- * プレイヤー弾が敵に当たる判定半径。見た目よりやや大きめにして、
- * リモートNPCの表示遅延 (補間280ms) や担当ピア側との位置ずれがあっても
- * 「狙って撃ったのにすり抜ける」体感を減らす
- */
-export const NPC_HIT_RADIUS = 1.2;
 
 export interface NpcTarget {
   id: string;
@@ -36,6 +88,8 @@ export interface NpcTarget {
 export interface NpcAttack {
   targetId: string;
   targetPos: Vec2;
+  /** 突進型の自爆 (発射と同時に本体が死亡している) */
+  explode?: boolean;
 }
 
 /** ウェーブ制からの敵挙動の調整。省略時は基準挙動 (常時再出現・強さ1) */
@@ -44,6 +98,8 @@ export interface NpcWaveMod {
   respawnPaused: boolean;
   /** 強さ (1 = 基準)。攻撃間隔が 1/n 倍、移動速度が緩やかに上がる */
   aggression: number;
+  /** スロット別の敵編成。再出現時にこの種別へ切り替わる */
+  kinds?: readonly NpcKind[];
 }
 
 function hashString(value: string): number {
@@ -66,6 +122,7 @@ export class LocalNpcSim {
   heading = 0;
   hp = NPC_MAX_HP;
   mode: NpcMode = 'spawn';
+  kind: NpcKind = 'wisp';
 
   private readonly random: () => number;
   private readonly orbitSign: number;
@@ -74,18 +131,27 @@ export class LocalNpcSim {
   private respawnAt = 0;
   private spawnUntil = 0;
   private nextAttackAt = 0;
+  /** NPC ID 末尾のスロット番号 (ウェーブ編成の引き当てに使う) */
+  private readonly slot: number;
 
   constructor(
     readonly id: string,
     now: number,
+    kind: NpcKind = 'wisp',
   ) {
     this.random = mulberry32(hashString(id));
     this.orbitSign = this.random() < 0.5 ? -1 : 1;
-    this.spawn(now);
+    this.slot = Number(id.slice(id.lastIndexOf(':') + 1)) || 0;
+    this.spawn(now, kind);
   }
 
   get alive(): boolean {
     return this.mode !== 'dead';
+  }
+
+  /** プレイヤー弾が当たる判定半径 (種別で異なる) */
+  get hitRadius(): number {
+    return KIND_PARAMS[this.kind].hitRadius;
   }
 
   update(
@@ -95,7 +161,9 @@ export class LocalNpcSim {
     wave?: NpcWaveMod,
   ): NpcAttack | null {
     if (!this.alive) {
-      if (!wave?.respawnPaused && now >= this.respawnAt) this.spawn(now);
+      if (!wave?.respawnPaused && now >= this.respawnAt) {
+        this.spawn(now, wave?.kinds?.[this.slot]);
+      }
       return null;
     }
     if (now < this.spawnUntil) {
@@ -115,14 +183,25 @@ export class LocalNpcSim {
       }
     }
 
+    const params = KIND_PARAMS[this.kind];
+    if (this.kind === 'rusher' && nearest && nearestDist <= params.attackRange) {
+      // 自爆: 本体はここで死亡し、呼び出し側が弾リングを発射する
+      this.explode(now);
+      return {
+        targetId: nearest.id,
+        targetPos: { x: nearest.pos.x, y: nearest.pos.y },
+        explode: true,
+      };
+    }
+
     let dx: number;
     let dy: number;
-    if (nearest && nearestDist <= CHASE_RANGE) {
-      this.mode = nearestDist <= ATTACK_RANGE ? 'attack' : 'chase';
+    if (nearest && nearestDist <= params.chaseRange) {
+      this.mode = nearestDist <= params.attackRange ? 'attack' : 'chase';
       const tx = nearest.pos.x - this.pos.x;
       const ty = nearest.pos.y - this.pos.y;
       const inv = nearestDist > 0.001 ? 1 / nearestDist : 0;
-      if (nearestDist > DESIRED_RANGE + 2) {
+      if (nearestDist > params.desiredRange + 2) {
         dx = tx * inv;
         dy = ty * inv;
       } else {
@@ -151,7 +230,7 @@ export class LocalNpcSim {
     // 速度は攻撃頻度ほど尖らせない (最終波でも +40% 程度に収める)
     const speedMul = 1 + (aggression - 1) * 0.4;
     const desiredSpeed =
-      (this.mode === 'attack' ? NPC_SPEED * 0.7 : NPC_SPEED) * speedMul;
+      (this.mode === 'attack' ? params.speed * 0.7 : params.speed) * speedMul;
     const k = Math.min(1, dt * 4);
     this.vel.x += (dx * desiredSpeed - this.vel.x) * k;
     this.vel.y += (dy * desiredSpeed - this.vel.y) * k;
@@ -161,8 +240,10 @@ export class LocalNpcSim {
       this.heading = Math.atan2(this.vel.y, this.vel.x);
     }
 
-    if (nearest && nearestDist <= ATTACK_RANGE && now >= this.nextAttackAt) {
-      this.nextAttackAt = now + (2_400 + this.random() * 1_200) / aggression;
+    if (nearest && nearestDist <= params.attackRange && now >= this.nextAttackAt) {
+      this.nextAttackAt =
+        now +
+        (params.attackBaseMs + this.random() * params.attackJitterMs) / aggression;
       return {
         targetId: nearest.id,
         targetPos: { x: nearest.pos.x, y: nearest.pos.y },
@@ -195,17 +276,28 @@ export class LocalNpcSim {
       hp: this.hp,
       mode: this.mode,
       ts: Date.now(),
+      k: this.kind,
     };
   }
 
-  private spawn(now: number): void {
+  /** 突進型の自爆。弾リングの発射は呼び出し側 (game) が行う */
+  private explode(now: number): void {
+    this.hp = 0;
+    this.mode = 'dead';
+    this.vel.x = 0;
+    this.vel.y = 0;
+    this.respawnAt = now + NPC_RESPAWN_MS;
+  }
+
+  private spawn(now: number, kind?: NpcKind): void {
+    if (kind) this.kind = kind;
     const angle = this.random() * Math.PI * 2;
     const radius = 14 + this.random() * 20;
     this.pos.x = Math.cos(angle) * radius;
     this.pos.y = Math.sin(angle) * radius;
     this.vel.x = 0;
     this.vel.y = 0;
-    this.hp = NPC_MAX_HP;
+    this.hp = NPC_KINDS[this.kind].maxHp;
     this.mode = 'spawn';
     this.spawnUntil = now + 900;
     this.nextAttackAt = now + 1_800 + this.random() * 1_200;
@@ -245,6 +337,7 @@ export class RemoteNpcSim {
   lastY = 0;
   hp = NPC_MAX_HP;
   mode: NpcMode = 'spawn';
+  kind: NpcKind = 'wisp';
 
   private lastSeq = -1;
   private readonly buf: NpcSnapshot[] = [];
@@ -264,6 +357,7 @@ export class RemoteNpcSim {
     if (this.mode === 'dead' && state.mode !== 'dead') this.buf.length = 0;
     this.hp = state.hp;
     this.mode = state.mode;
+    this.kind = state.k ?? 'wisp';
     this.lastX = state.x;
     this.lastY = state.y;
     this.buf.push({
