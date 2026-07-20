@@ -18,6 +18,7 @@ const KIND_LOOKS: Record<
   rusher: { main: [0xe05a4a, 0xc04a40], accent: 0xffb347, scale: 0.85, bar: '#ff8a5c' },
   turret: { main: [0x6a6a80, 0x585870], accent: 0xff6d8a, scale: 1.35, bar: '#a0a0c0' },
   shield: { main: [0x4a70c8, 0x3e5ea8], accent: 0x9fd8ff, scale: 1.5, bar: '#6da8ff' },
+  boss: { main: [0x2c1a4a, 0x2c1a4a], accent: 0xb03060, scale: 2.6, bar: '#ff5a78' },
 };
 
 /** 小型敵の軽量3D表示。演算や所有権には関与しない。 */
@@ -97,6 +98,24 @@ export class EnemyView {
       ring.rotation.x = Math.PI / 2;
       ring.position.y = 1.02;
       this.body.add(ring);
+    }
+    if (kind === 'boss') {
+      // ボス: 傾いた二重リングと王冠状の角で禍々しく。
+      for (const [radius, tilt] of [
+        [0.85, 0.35],
+        [1.05, -0.5],
+      ] as const) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.06, 8, 24), accent);
+        ring.rotation.x = Math.PI / 2 + tilt;
+        ring.position.y = 1.02;
+        this.body.add(ring);
+      }
+      for (const angle of [-0.7, 0, 0.7]) {
+        const spike = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.62, 6), accent);
+        spike.position.set(Math.sin(angle) * 0.34 - 0.15, 1.72, Math.sin(angle) * 0.3);
+        spike.rotation.z = -0.25;
+        this.body.add(spike);
+      }
     }
     if (kind !== 'turret') {
       // 後方へ流れる魔力の尾 (砲台型は据え置きなので無し)。

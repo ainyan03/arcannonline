@@ -30,7 +30,7 @@ type JsonRecord = Record<string, unknown>;
 const PEER_ID_RE = /^[0-9a-f]{64}$/;
 /** 申告バージョンの受理上限 (異常値によるバナー誤発火を防ぐ緩い天井) */
 const MAX_PROTO_VERSION = 1_000_000;
-const NPC_ID_RE = /^[0-9a-f]{64}:npc:[0-7]$/;
+const NPC_ID_RE = /^[0-9a-f]{64}:npc:[0-8]$/;
 /** JWT (base64url 3パート) の形式チェック */
 const JWT_RE = /^[\w-]+\.[\w-]+\.[\w-]+$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
@@ -143,7 +143,8 @@ export function parseRealtimeMessage(value: unknown): RealtimeMessage | null {
     return state ? { type: 'state', state } : null;
   }
   if (v.type === 'npcs') {
-    if (!Array.isArray(v.states) || v.states.length > NPCS_PER_PEER) return null;
+    // +1 はリーダーだけが担当するボススロット (BOSS_NPC_SLOT) のぶん
+    if (!Array.isArray(v.states) || v.states.length > NPCS_PER_PEER + 1) return null;
     const states = v.states.map(parseNpcStatePayload);
     return states.every((state): state is NpcStatePayload => state !== null)
       ? { type: 'npcs', states }

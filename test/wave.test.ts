@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SEGMENTS_PER_ROUND,
   WAVE_ASSAULT_MS,
   WAVE_CALM_MS,
   WAVE_CYCLE_MS,
@@ -29,11 +30,19 @@ describe('waveStateAt', () => {
     expect(calm.phaseEndsAt - (cycleStart + WAVE_ASSAULT_MS)).toBe(WAVE_CALM_MS);
   });
 
-  it('cycles the display number 1..WAVES_PER_ROUND', () => {
-    for (let i = 0; i < WAVES_PER_ROUND * 2; i++) {
+  it('cycles waves 1..WAVES_PER_ROUND then a boss segment each round', () => {
+    for (let i = 0; i < SEGMENTS_PER_ROUND * 2; i++) {
       const w = waveStateAt(WAVE_CYCLE_MS * i);
-      expect(w.number).toBe((i % WAVES_PER_ROUND) + 1);
-      expect(w.tier).toBe(i % WAVES_PER_ROUND);
+      const segment = i % SEGMENTS_PER_ROUND;
+      if (segment < WAVES_PER_ROUND) {
+        expect(w.boss).toBe(false);
+        expect(w.number).toBe(segment + 1);
+        expect(w.tier).toBe(segment);
+      } else {
+        expect(w.boss).toBe(true);
+        expect(w.tier).toBe(WAVES_PER_ROUND - 1);
+      }
+      expect(w.round).toBe(Math.floor(i / SEGMENTS_PER_ROUND));
     }
   });
 

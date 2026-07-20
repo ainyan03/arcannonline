@@ -83,11 +83,11 @@ describe('protocol validation', () => {
     };
     expect(parseRealtimeMessage({ type: 'npcs', states: [npc] }))
       .toMatchObject({ type: 'npcs', states: [{ id: npc.id, mode: 'chase' }] });
-    // 上限 (NPCS_PER_PEER) を超えるバッチは拒否する
+    // 上限 (NPCS_PER_PEER + ボススロット) を超えるバッチは拒否する
     expect(
       parseRealtimeMessage({
         type: 'npcs',
-        states: Array.from({ length: NPCS_PER_PEER + 1 }, () => npc),
+        states: Array.from({ length: NPCS_PER_PEER + 2 }, () => npc),
       }),
     ).toBeNull();
     expect(parseRealtimeMessage({

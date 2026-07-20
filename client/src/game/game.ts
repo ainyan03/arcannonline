@@ -9,6 +9,7 @@ import {
   NORMAL_SHOT_SCRIPT_SOURCE,
 } from '../../../shared/src/danmaku-scripts';
 import {
+  BOSS_SCRIPT_IDS,
   NPC_FIRE_SCRIPT_ID,
   NPC_RUSHER_SCRIPT_ID,
   NPC_SCRIPT_SOURCES,
@@ -25,6 +26,7 @@ import {
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
   MAX_HP,
+  BOSS_NPC_SLOT,
   NPC_KINDS,
   NPC_STATE_INTERVAL_MS,
   NPCS_PER_PEER,
@@ -168,6 +170,13 @@ export class Game {
   private readonly waveBanner: WaveBannerUI;
   /** 直前フレームのウェーブ状態 (フェーズ遷移の告知判定用)。参加直後は告知しない */
   private lastWave: WaveState | null = null;
+  /** ボスを撃破済みのラウンド番号 (同ラウンド内の再召喚を防ぐ) */
+  private bossDefeatedRound = -1;
+  /** 直近に観測したボスの HP とそのラウンド (リーダー交代時の引き継ぎ用) */
+  private lastBossHp: number | null = null;
+  private lastBossRound = -1;
+  /** ボス弾幕のローテーション位置 */
+  private bossScriptIdx = 0;
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -410,6 +419,17 @@ export class Game {
         npc.sim.push(state, now);
         this.ensureNpcViewKind(npc, false);
         npc.view.setState(state.hp, state.mode);
+        if (state.k === 'boss') {
+          // リーダー交代時の HP 引き継ぎと、撃破の重複告知防止に使う
+          const round = waveStateAt(this.roomNow()).round;
+          if (state.mode === 'dead') {
+            if (wasAlive) this.onBossDefeated();
+            else this.bossDefeatedRound = round;
+          } else {
+            this.lastBossHp = state.hp;
+            this.lastBossRound = round;
+          }
+        }
         if (wasAlive && state.mode === 'dead') {
           this.particles.burst(state.x, state.y, new THREE.Color(0x9b63da), 1.2);
           if (
@@ -775,8 +795,11 @@ export class Game {
     this.lastNpcUpdate = now;
     const wave = waveStateAt(this.roomNow());
     this.announceWaveTransition(wave);
+    this.manageBoss(wave, now);
     const waveMod = {
-      respawnPaused: wave.phase === 'calm',
+      // ボス段は雑魚が再出現せず、戦いの焦点がボスに移る
+      // (撃破されたボスもこの抑止で再出現しない)
+      respawnPaused: wave.phase === 'calm' || wave.boss,
       aggression: waveAggression(wave.tier),
       kinds: WAVE_COMPOSITION[wave.tier],
     };
@@ -807,8 +830,17 @@ export class Game {
     this.lastWave = wave;
     if (!prev || (prev.index === wave.index && prev.phase === wave.phase)) return;
     if (wave.phase === 'assault') {
-      this.waveBanner.show(`第${wave.number}波 襲来!`);
-      this.chat.addLine('', `* 第${wave.number}波が襲来!`, true);
+      if (wave.boss) {
+        this.waveBanner.show(`${NPC_KINDS.boss.name} 襲来!!`);
+        this.chat.addLine('', `* ボス「${NPC_KINDS.boss.name}」が現れた!`, true);
+      } else {
+        this.waveBanner.show(`第${wave.number}波 襲来!`);
+        this.chat.addLine('', `* 第${wave.number}波が襲来!`, true);
+      }
+    } else if (wave.boss) {
+      if (this.bossDefeatedRound !== wave.round) {
+        this.chat.addLine('', `* ${NPC_KINDS.boss.name}は退いていった…`, true);
+      }
     } else {
       this.chat.addLine(
         '',
@@ -816,6 +848,59 @@ export class Game {
         true,
       );
     }
+  }
+
+  /** ボスの召喚・退場。最小ピアIDのクライアントだけがボスを担当する */
+  private manageBoss(wave: WaveState, now: number): void {
+    const bossIdx = this.localNpcs.findIndex((npc) => npc.sim.kind === 'boss');
+    const canHost = wave.boss && this.isBossLeader();
+    if (bossIdx >= 0 && !canHost) {
+      // 段の終了 or リーダー交代: 自分のボスを退場させる
+      // (撃破済みの死体は段の間 dead を配信し続けるためここには来ない)
+      const [entry] = this.localNpcs.splice(bossIdx, 1);
+      this.world.scene.remove(entry.view.object);
+      entry.view.dispose();
+      if (this.targetId === entry.sim.id) this.targetId = null;
+      return;
+    }
+    if (
+      bossIdx < 0 &&
+      canHost &&
+      wave.phase === 'assault' &&
+      this.bossDefeatedRound !== wave.round
+    ) {
+      const sim = new LocalNpcSim(
+        `${this.room.selfId}:npc:${BOSS_NPC_SLOT}`,
+        now,
+        'boss',
+      );
+      // リーダー交代の引き継ぎ: 同ラウンドで観測済みの HP から再開する
+      if (this.lastBossRound === wave.round && this.lastBossHp !== null) {
+        sim.hp = Math.max(1, this.lastBossHp);
+      }
+      const view = new EnemyView(sim.id, true, 'boss');
+      view.sync(sim.pos.x, sim.pos.y, sim.heading);
+      this.localNpcs.push({ sim, view });
+      this.world.scene.add(view.object);
+    }
+  }
+
+  /** 自分が接続中のプレイヤーの中で最小のピアIDか (= ボス担当) */
+  private isBossLeader(): boolean {
+    for (const id of this.remotes.keys()) {
+      if (id < this.room.selfId) return false;
+    }
+    return true;
+  }
+
+  /** ボス撃破の告知 (担当・観測どちらの経路でも一度だけ) */
+  private onBossDefeated(): void {
+    const round = waveStateAt(this.roomNow()).round;
+    if (this.bossDefeatedRound === round) return;
+    this.bossDefeatedRound = round;
+    this.waveBanner.show(`${NPC_KINDS.boss.name} 撃破!`);
+    this.chat.addLine('', `* ${NPC_KINDS.boss.name}を撃破した!`, true);
+    this.audio.playDefeat();
   }
 
   /** 再出現で種別が変わった敵のビューを作り直す */
@@ -838,9 +923,11 @@ export class Game {
     );
     const script = attack.explode
       ? NPC_RUSHER_SCRIPT_ID
-      : npc.kind === 'turret'
-        ? NPC_TURRET_SCRIPT_ID
-        : NPC_FIRE_SCRIPT_ID;
+      : npc.kind === 'boss'
+        ? BOSS_SCRIPT_IDS[this.bossScriptIdx++ % BOSS_SCRIPT_IDS.length]
+        : npc.kind === 'turret'
+          ? NPC_TURRET_SCRIPT_ID
+          : NPC_FIRE_SCRIPT_ID;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
       script,
@@ -953,10 +1040,11 @@ export class Game {
               npc.sim.pos.x,
               npc.sim.pos.y,
               new THREE.Color(0x9b63da),
-              1.2,
+              npc.sim.kind === 'boss' ? 3 : 1.2,
             );
             this.audio.playDefeat();
             if (this.targetId === npc.sim.id) this.targetId = null;
+            if (npc.sim.kind === 'boss') this.onBossDefeated();
           }
         },
       );
@@ -1492,10 +1580,16 @@ export class Game {
     const wave = this.lastWave ?? waveStateAt(now);
     const remain = Math.max(0, Math.ceil((wave.phaseEndsAt - now) / 1000));
     if (wave.phase === 'assault') {
-      return `wave: 第${wave.number}波 襲来中 (残り${remain}s)`;
+      return wave.boss
+        ? `wave: ボス戦 (残り${remain}s)`
+        : `wave: 第${wave.number}波 襲来中 (残り${remain}s)`;
     }
-    const nextNumber = (wave.number % WAVES_PER_ROUND) + 1;
-    return `wave: 小休止 (第${nextNumber}波まで ${remain}s)`;
+    const nextLabel = wave.boss
+      ? '第1波'
+      : wave.number === WAVES_PER_ROUND
+        ? 'ボス'
+        : `第${wave.number + 1}波`;
+    return `wave: 小休止 (${nextLabel}まで ${remain}s)`;
   }
 
   /** 接続中ピアの時計ずれ中央値へ寄せた、ウェーブ進行用のルーム時刻。 */

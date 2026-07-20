@@ -11,16 +11,24 @@ export const WAVE_ASSAULT_MS = 75_000;
 export const WAVE_CALM_MS = 15_000;
 /** 1ウェーブの周期 */
 export const WAVE_CYCLE_MS = WAVE_ASSAULT_MS + WAVE_CALM_MS;
-/** 1ラウンドのウェーブ数。最終波が最も強く、次のラウンドで振り出しに戻る */
+/** 1ラウンドのウェーブ数。最終波が最も強く、その後にボス段が来る */
 export const WAVES_PER_ROUND = 5;
+/** 1ラウンドの区分数 (第1〜5波 + ボス段) */
+export const SEGMENTS_PER_ROUND = WAVES_PER_ROUND + 1;
+/** 1ラウンドの長さ */
+export const ROUND_MS = SEGMENTS_PER_ROUND * WAVE_CYCLE_MS;
 
 export interface WaveState {
-  /** エポックからの通算ウェーブ番号 (内部用) */
+  /** エポックからの通算区分番号 (内部用) */
   index: number;
-  /** 表示用のラウンド内ウェーブ番号 (1〜WAVES_PER_ROUND) */
+  /** エポックからの通算ラウンド番号 (ボスの撃破管理・HP引き継ぎに使う) */
+  round: number;
+  /** 表示用のラウンド内ウェーブ番号 (1〜WAVES_PER_ROUND。ボス段は WAVES_PER_ROUND) */
   number: number;
-  /** 難易度段階 (0〜WAVES_PER_ROUND-1) */
+  /** 難易度段階 (0〜WAVES_PER_ROUND-1。ボス段は最終段扱い) */
   tier: number;
+  /** ボス段か (第5波の後の1区分。雑魚は再出現せず、ボスが襲来する) */
+  boss: boolean;
   phase: 'assault' | 'calm';
   /** 現フェーズの終了時刻 (エポックms) */
   phaseEndsAt: number;
@@ -32,11 +40,16 @@ export function waveStateAt(nowMs: number): WaveState {
   const cycleStart = index * WAVE_CYCLE_MS;
   const inCycle = nowMs - cycleStart;
   const assault = inCycle < WAVE_ASSAULT_MS;
-  const tier = ((index % WAVES_PER_ROUND) + WAVES_PER_ROUND) % WAVES_PER_ROUND;
+  const segment =
+    ((index % SEGMENTS_PER_ROUND) + SEGMENTS_PER_ROUND) % SEGMENTS_PER_ROUND;
+  const boss = segment === WAVES_PER_ROUND;
+  const tier = boss ? WAVES_PER_ROUND - 1 : segment;
   return {
     index,
-    number: tier + 1,
+    round: Math.floor(nowMs / ROUND_MS),
+    number: boss ? WAVES_PER_ROUND : segment + 1,
     tier,
+    boss,
     phase: assault ? 'assault' : 'calm',
     phaseEndsAt: cycleStart + (assault ? WAVE_ASSAULT_MS : WAVE_CYCLE_MS),
   };

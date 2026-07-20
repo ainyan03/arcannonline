@@ -82,7 +82,22 @@ const KIND_PARAMS: Record<
     attackJitterMs: 1_600,
     hitRadius: 1.6,
   },
+  // ボス: 遅いが常に交戦し、遠くから大型弾幕を回す
+  boss: {
+    speed: 1.6,
+    chaseRange: 500,
+    attackRange: 55,
+    desiredRange: 26,
+    attackBaseMs: 2_600,
+    attackJitterMs: 800,
+    hitRadius: 2.6,
+  },
 };
+
+/** 湧き位置のリング半径 (中心からの距離)。ボスは外周から現れる */
+function spawnRing(kind: NpcKind, random: () => number): number {
+  return kind === 'boss' ? 45 + random() * 15 : 14 + random() * 20;
+}
 /**
  * スナップショットの遅延再生量。送信間隔 (NPC_STATE_INTERVAL_MS=200ms) より
  * 長くしないと補間の挟み込みが成立せず、200ms ごとのステップ移動になる
@@ -379,7 +394,7 @@ export class LocalNpcSim {
     // リトライ回数が端末間で揃う必要はない)
     for (let attempt = 0; attempt < 8; attempt++) {
       const angle = this.random() * Math.PI * 2;
-      const radius = 14 + this.random() * 20;
+      const radius = spawnRing(this.kind, this.random);
       this.pos.x = Math.cos(angle) * radius;
       this.pos.y = Math.sin(angle) * radius;
       if (!isBlocked(this.pos.x, this.pos.y, NPC_BODY_RADIUS)) break;
