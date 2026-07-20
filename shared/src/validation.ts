@@ -303,9 +303,16 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
     }
     case 'base-sync': {
       if (!Array.isArray(v.hits) || v.hits.length > BASE_SYNC_HITS_MAX) return null;
+      if (v.lit !== undefined && typeof v.lit !== 'boolean') return null;
+      if (v.at !== undefined && !finite(v.at, 0, 10_000_000_000_000)) return null;
       const hits = v.hits.map(parseBaseHit);
       return hits.every((hit): hit is BaseHitEvent => hit !== null)
-        ? { type: 'base-sync', hits }
+        ? {
+            type: 'base-sync',
+            hits,
+            ...(v.lit === undefined ? {} : { lit: v.lit as boolean }),
+            ...(v.at === undefined ? {} : { at: v.at as number }),
+          }
         : null;
     }
     case 'chat':

@@ -47,6 +47,21 @@ export class BaseDefense {
     return accepted;
   }
 
+  /**
+   * 途中参加同期を取り込む。命中履歴だけでは「一度 HP 0 になった後の回復中」
+   * を復元できないため、送信元が消灯中ならローカル状態にも反映する。
+   * 点灯への遷移は従来どおり全快時だけ lit() が行う。
+   */
+  mergeSnapshot(
+    events: readonly BaseHitEvent[],
+    sourceLit: boolean | undefined,
+    now = Date.now(),
+  ): number {
+    const accepted = this.merge(events, now);
+    if (sourceLit === false) this.litState = false;
+    return accepted;
+  }
+
   hp(now = Date.now()): number {
     this.prune(now);
     let damage = 0;

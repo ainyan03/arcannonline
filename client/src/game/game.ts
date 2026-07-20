@@ -219,6 +219,7 @@ export class Game {
   ) {
     // 参加ボタンのユーザー操作中に初期化し、ブラウザの自動再生制限を解除する。
     void this.audio.unlock();
+    this.engine.setObstacles(OBSTACLES);
     this.world = createWorld(container);
     this.baseView = new BaseView();
     this.world.scene.add(this.baseView.object);
@@ -349,7 +350,11 @@ export class Game {
       this.sendStateNow();
       this.sendNpcsNow();
       this.sendProfileNow();
-      this.room.sendBaseSyncTo(id, this.baseDefense.snapshot());
+      this.room.sendBaseSyncTo(
+        id,
+        this.baseDefense.snapshot(),
+        this.baseDefense.lit(),
+      );
     };
     this.room.onState = (id, state) => {
       const now = performance.now();
@@ -429,8 +434,20 @@ export class Game {
       const at = Number.isFinite(skew) ? event.at + (skew as number) : event.at;
       if (this.baseDefense.apply({ ...event, at })) this.showBaseHit();
     };
-    this.room.onBaseSync = (_id, hits) => {
-      this.baseDefense.merge(hits);
+    this.room.onBaseSync = (id, hits, lit, sentAt) => {
+      // snapshot 内の at は送信ピアのローカル時計へ正規化済みなので、
+      // 自分の時計へ再変換してから取り込む。state がまだ届いておらず時計ずれを
+      // 推定できない場合は、snapshot の送信時刻から各命中の経過時間を復元する。
+      const skew = this.remotes.get(id)?.sim.clockSkewMin;
+      const offset = Number.isFinite(skew)
+        ? (skew as number)
+        : Number.isFinite(sentAt)
+          ? Date.now() - (sentAt as number)
+          : 0;
+      const adjusted = offset === 0
+        ? hits
+        : hits.map((event) => ({ ...event, at: event.at + offset }));
+      this.baseDefense.mergeSnapshot(adjusted, lit);
     };
     this.room.onChat = (id, text) => {
       const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
@@ -537,7 +554,6 @@ export class Game {
       this.checkNpcHits(now);
       this.checkHits(now);
       this.checkBaseHits();
-      this.checkObstacleHits();
       this.updateHud();
     }, STATE_INTERVAL_MS));
 
@@ -651,7 +667,6 @@ export class Game {
     this.checkNpcHits(now);
     this.checkHits(now);
     this.checkBaseHits();
-    this.checkObstacleHits();
     this.updateBaseView(now);
 
     // 無敵時間中は点滅、被弾直後は発光フラッシュ
@@ -812,6 +827,7 @@ export class Game {
   ): void {
     if (npc.view.kind === npc.sim.kind) return;
     this.world.scene.remove(npc.view.object);
+    npc.view.dispose();
     npc.view = new EnemyView(npc.sim.id, local, npc.sim.kind);
     this.world.scene.add(npc.view.object);
   }
@@ -889,22 +905,6 @@ export class Game {
       this.room.broadcastBaseHit(event);
       this.showBaseHit();
     });
-  }
-
-  /**
-   * 岩に入った弾を消す。弾道は発射イベントから全クライアントが決定論的に
-   * 再現しているため、岩との衝突も各自ローカルに消すだけで一致する
-   * (同期メッセージ不要)。岩ごとに空間ハッシュを引くので tick 負荷も小さい
-   */
-  private checkObstacleHits(): void {
-    for (const o of OBSTACLES) {
-      this.engine.forEachNearby(o.x, o.y, o.r, (bullet, index) => {
-        const dx = bullet.x - o.x;
-        const dy = bullet.y - o.y;
-        if (dx * dx + dy * dy > o.r * o.r) return;
-        this.engine.killAt(index);
-      });
-    }
   }
 
   private showBaseHit(): void {
@@ -1439,6 +1439,7 @@ export class Game {
     if (!npc) return;
     this.remoteNpcs.delete(id);
     this.world.scene.remove(npc.view.object);
+    npc.view.dispose();
     if (this.targetId === id) this.targetId = null;
   }
 

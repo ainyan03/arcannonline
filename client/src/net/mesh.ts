@@ -66,7 +66,12 @@ export class Mesh {
   onBulletKill?: (fireId: string, spawnIdx: number) => void;
   onBulletCollision?: (id: string, ev: BulletCollisionEvent) => void;
   onBaseHit?: (id: string, ev: BaseHitEvent) => void;
-  onBaseSync?: (id: string, hits: BaseHitEvent[]) => void;
+  onBaseSync?: (
+    id: string,
+    hits: BaseHitEvent[],
+    lit?: boolean,
+    sentAt?: number,
+  ) => void;
   /** GitHub 認証済みプロフィール (Firebase ID トークン) の申告 */
   onProfile?: (id: string, token: string | null) => void;
   /** ピアが申告したプロトコルバージョン (プレゼンス/PEX 受信のたびに発火) */
@@ -162,9 +167,11 @@ export class Mesh {
   }
 
   /** 拠点の命中履歴を特定ピアだけへ送る (新規開通時の初期同期用) */
-  sendBaseSyncTo(id: string, hits: BaseHitEvent[]): void {
+  sendBaseSyncTo(id: string, hits: BaseHitEvent[], lit: boolean): void {
     const e = this.peers.get(id);
-    if (e?.peer.isOpen) e.peer.sendReliable({ type: 'base-sync', hits });
+    if (e?.peer.isOpen) {
+      e.peer.sendReliable({ type: 'base-sync', hits, lit, at: Date.now() });
+    }
   }
 
   broadcastProfile(token: string): void {
@@ -384,7 +391,7 @@ export class Mesh {
         this.onBaseHit?.(fromId, msg.ev);
         break;
       case 'base-sync':
-        this.onBaseSync?.(fromId, msg.hits);
+        this.onBaseSync?.(fromId, msg.hits, msg.lit, msg.at);
         break;
       case 'chat':
         this.onChat?.(fromId, String(msg.text).slice(0, 200));

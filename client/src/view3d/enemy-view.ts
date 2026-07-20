@@ -151,6 +151,29 @@ export class EnemyView {
     this.body.scale.setScalar(spawnScale * KIND_LOOKS[this.kind].scale);
   }
 
+  /** scene から外す際に、このビュー専用の WebGL リソースを解放する。 */
+  dispose(): void {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    this.object.traverse((child) => {
+      if ('geometry' in child) {
+        const geometry = (child as THREE.Mesh).geometry;
+        if (geometry) geometries.add(geometry);
+      }
+      if ('material' in child) {
+        const material = (child as THREE.Mesh | THREE.Sprite).material;
+        if (Array.isArray(material)) {
+          for (const item of material) materials.add(item);
+        } else if (material) {
+          materials.add(material);
+        }
+      }
+    });
+    for (const geometry of geometries) geometry.dispose();
+    for (const material of materials) material.dispose();
+    this.hpTexture.dispose();
+  }
+
   private redrawHp(): void {
     const ctx = this.hpCanvas.getContext('2d')!;
     const fraction = Math.min(Math.max(this.hp / this.maxHp, 0), 1);

@@ -73,7 +73,9 @@ export class GameRoom {
   }
 
   set onBaseSync(
-    fn: ((id: string, hits: BaseHitEvent[]) => void) | undefined,
+    fn:
+      | ((id: string, hits: BaseHitEvent[], lit?: boolean, sentAt?: number) => void)
+      | undefined,
   ) {
     this.mesh.onBaseSync = fn;
   }
@@ -131,8 +133,8 @@ export class GameRoom {
   }
 
   /** 拠点の命中履歴を特定ピアだけへ送る (新規開通時の初期同期用) */
-  sendBaseSyncTo(id: string, hits: BaseHitEvent[]): void {
-    this.mesh.sendBaseSyncTo(id, hits);
+  sendBaseSyncTo(id: string, hits: BaseHitEvent[], lit: boolean): void {
+    this.mesh.sendBaseSyncTo(id, hits, lit);
   }
 
   broadcastProfile(token: string): void {

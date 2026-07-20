@@ -12,6 +12,7 @@ import {
   TICK_RATE,
   type Vec2,
 } from '../../../../shared/src/protocol';
+import type { CircleObstacle } from '../../../../shared/src/obstacles';
 import { parse, type Program } from './parser';
 import { mulberry32 } from './rng';
 import { MAX_SCRIPT_TICKS, ScriptRun, type ScriptContext } from './vm';
@@ -111,11 +112,17 @@ export class BulletEngine {
     string,
     { damage: number; expires: number; owner?: string }
   >();
+  /** 全クライアント共通の静的障害物。ゲーム本体から明示設定する。 */
+  private obstacles: readonly CircleObstacle[] = [];
 
   constructor(
     private readonly maxBullets = MAX_BULLETS,
     private readonly ownerCap = MAX_OWN_BULLETS,
   ) {}
+
+  setObstacles(obstacles: readonly CircleObstacle[]): void {
+    this.obstacles = obstacles;
+  }
 
   /** ベンチマーク用: ランダムな弾を大量投入する (ゲーム本体では使わない) */
   debugFill(count: number, seed = 1, owners = 4): void {
@@ -291,6 +298,8 @@ export class BulletEngine {
     for (let i = 0; i < bs.length; i++) {
       const b = bs[i];
       if (!b.alive) continue;
+      const fromX = b.x;
+      const fromY = b.y;
       b.x += b.vx * DT;
       b.y += b.vy * DT;
       b.ttl--;
@@ -306,6 +315,12 @@ export class BulletEngine {
         b.x < -CULL_BOUND || b.x > CULL_BOUND ||
         b.y < -CULL_BOUND || b.y > CULL_BOUND
       ) {
+        this.kill(i);
+        continue;
+      }
+      // 固定 tick ごとに移動区間と円を判定する。描画頻度に依存させず、
+      // 高速弾のトンネリングと端末間の生死分岐を防ぐ。
+      if (this.pathHitsObstacle(fromX, fromY, b.x, b.y, b.radius)) {
         this.kill(i);
       }
     }
@@ -377,6 +392,27 @@ export class BulletEngine {
     const pendingDamage =
       pending && (!pending.owner || pending.owner === owner) ? pending.damage : 0;
     this.pendingDamage.delete(mutationKey);
+    const radius0 = Math.min(Math.max(radius, 0.05), 0.9);
+    // 受信遅延の追いつき再生では生成位置を一気に先へ進めるため、経過した
+    // 各 tick の軌跡を検査し、過去に岩へ当たった弾を復活させない。
+    if (advanceTicks > 0) {
+      let fromX = x;
+      let fromY = y;
+      for (let step = 1; step <= advanceTicks; step++) {
+        const toX = x + vx * DT * step;
+        const toY = y + vy * DT * step;
+        const remainingTtl = lifeTicks - step;
+        const currentRadius = remainingTtl < SHRINK_TICKS
+          ? radius0 * (
+              SHRINK_FLOOR +
+              (1 - SHRINK_FLOOR) * Math.max(remainingTtl / SHRINK_TICKS, 0)
+            )
+          : radius0;
+        if (this.pathHitsObstacle(fromX, fromY, toX, toY, currentRadius)) return;
+        fromX = toX;
+        fromY = toY;
+      }
+    }
     const bullet: Bullet = {
       alive: true,
       x: x + vx * DT * advanceTicks,
@@ -384,8 +420,8 @@ export class BulletEngine {
       vx,
       vy,
       dur: Math.min(Math.max(dur, 1), 1000) - pendingDamage,
-      radius: Math.min(Math.max(radius, 0.05), 0.9),
-      radius0: Math.min(Math.max(radius, 0.05), 0.9),
+      radius: radius0,
+      radius0,
       owner,
       ttl,
       fireId,
@@ -462,6 +498,35 @@ export class BulletEngine {
     if (n <= 0) this.ownerCounts.delete(b.owner);
     else this.ownerCounts.set(b.owner, n);
     this.onKill?.(b, cause);
+  }
+
+  /** 移動区間が、弾半径を膨らませた障害物円へ触れるか。 */
+  private pathHitsObstacle(
+    fromX: number,
+    fromY: number,
+    toX: number,
+    toY: number,
+    bulletRadius: number,
+  ): boolean {
+    const vx = toX - fromX;
+    const vy = toY - fromY;
+    const len2 = vx * vx + vy * vy;
+    for (const obstacle of this.obstacles) {
+      const projection = len2 > 0
+        ? Math.min(
+            Math.max(
+              ((obstacle.x - fromX) * vx + (obstacle.y - fromY) * vy) / len2,
+              0,
+            ),
+            1,
+          )
+        : 0;
+      const dx = fromX + vx * projection - obstacle.x;
+      const dy = fromY + vy * projection - obstacle.y;
+      const radius = obstacle.r + bulletRadius;
+      if (dx * dx + dy * dy <= radius * radius) return true;
+    }
+    return false;
   }
 
   /**

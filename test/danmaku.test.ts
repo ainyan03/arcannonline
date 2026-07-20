@@ -82,6 +82,38 @@ describe('BulletEngine', () => {
     expect(bullet?.vy).toBeCloseTo(-2);
   });
 
+  it('removes bullets at obstacles on fixed ticks using the bullet radius', () => {
+    const engine = new BulletEngine();
+    engine.setObstacles([{ x: 2, y: 0, r: 1 }]);
+    // 中心は円の外を通るが、半径 0.5 の弾は岩へ接触する。
+    engine.startScript(
+      'fire(0, 60, 1, 0.5, 1);',
+      1,
+      () => ({ x: 0, y: 1.4 }),
+      0,
+      'owner',
+    );
+    engine.tick();
+    engine.tick();
+    expect(engine.aliveCount).toBe(0);
+  });
+
+  it('does not resurrect an obstacle-hit bullet during catch-up replay', () => {
+    const engine = new BulletEngine();
+    engine.setObstacles([{ x: 2, y: 0, r: 0.5 }]);
+    engine.startScript(
+      'fire(0, 60, 1, 0.2, 1);',
+      1,
+      () => ({ x: 0, y: 0 }),
+      0,
+      'owner',
+      undefined,
+      4,
+      'late-fire',
+    );
+    expect(engine.aliveCount).toBe(0);
+  });
+
   it('keeps kills and collision damage that arrive before bullet creation', () => {
     const killed = new BulletEngine();
     killed.killByFire('late-fire', 0);

@@ -118,6 +118,10 @@ describe('protocol validation', () => {
       .toEqual({ type: 'base-hit', ev: event });
     expect(parseReliableMessage({ type: 'base-sync', hits: [event] }))
       .toEqual({ type: 'base-sync', hits: [event] });
+    expect(parseReliableMessage({ type: 'base-sync', hits: [event], lit: false, at: 123 }))
+      .toEqual({ type: 'base-sync', hits: [event], lit: false, at: 123 });
+    expect(parseReliableMessage({ type: 'base-sync', hits: [event], lit: 'no' }))
+      .toBeNull();
     expect(parseReliableMessage({ type: 'base-hit', ev: { ...event, npc: 'bad' } }))
       .toBeNull();
     expect(parseReliableMessage({ type: 'base-sync', hits: Array(257).fill(event) }))

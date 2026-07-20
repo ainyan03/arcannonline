@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 17;
+export const PROTO_VERSION = 18;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -322,7 +322,8 @@ export type ReliableMessage =
   | { type: 'bkill'; f: string; i: number }
   | { type: 'bcoll'; ev: BulletCollisionEvent }
   | { type: 'base-hit'; ev: BaseHitEvent }
-  | { type: 'base-sync'; hits: BaseHitEvent[] }
+  /** 途中参加者向けの拠点履歴。lit はヒステリシス状態の復元に使う */
+  | { type: 'base-sync'; hits: BaseHitEvent[]; lit?: boolean; at?: number }
   | { type: 'chat'; text: string }
   /**
    * GitHub 認証済みプロフィールの申告 (Firebase ID トークン)。受信側は

@@ -73,9 +73,11 @@ describe('BaseDefense', () => {
     expect(base.lit(10_000 + BASE_DAMAGE_WINDOW_MS)).toBe(false);
   });
 
-  it('a late joiner with partial damage assumes unlit until full recovery', () => {
+  it('restores an unlit snapshot even after local startup marked the base lit', () => {
     const joiner = new BaseDefense();
-    joiner.merge([hit('a', 30, 50_000)], 50_000);
+    // 実際の Game と同じく、最初の描画フレームが同期より先に走る。
+    expect(joiner.lit(50_000)).toBe(true);
+    joiner.mergeSnapshot([hit('a', 30, 50_000)], false, 50_000);
     expect(joiner.lit(50_000)).toBe(false);
     expect(joiner.lit(50_000 + BASE_DAMAGE_WINDOW_MS)).toBe(true);
   });
