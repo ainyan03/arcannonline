@@ -95,8 +95,11 @@ export function missileTravelMs(distance: number): number {
     MISSILE_TRAVEL_MAX_MS,
   );
 }
-/** ボムとしてのエネルギーコスト */
-export const MISSILE_BOMB_COST = 120;
+/**
+ * 1発あたりのエネルギーコスト。撃破に必要な発数だけ発射するため
+ * (オーバーキル防止)、コストも発数に比例する (満射 6発 = 120)
+ */
+export const MISSILE_COST_PER_SHOT = 20;
 /** 1イベントに載るミサイル数の上限 (検証用) */
 export const MISSILE_MAX_PER_EVENT = 8;
 /** ミサイルの索敵距離 */

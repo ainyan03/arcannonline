@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assignMissileTargets, isInFront } from '../client/src/sim/targeting';
+import { isInFront, planMissileVolley } from '../client/src/sim/targeting';
 import {
   MISSILE_SPEED,
   MISSILE_TRAVEL_MAX_MS,
@@ -32,12 +32,36 @@ describe('missileTravelMs', () => {
   });
 });
 
-describe('assignMissileTargets', () => {
-  it('round-robins across candidates and stacks extras on the first', () => {
-    expect(assignMissileTargets(['a', 'b', 'c'], 6)).toEqual([
-      'a', 'b', 'c', 'a', 'b', 'c',
+describe('planMissileVolley', () => {
+  it('assigns only what is needed to kill, nearest first (no overkill)', () => {
+    // ウィスプ24×3体 → 1発ずつで計3発。余り3発は撃たない
+    expect(
+      planMissileVolley(
+        [
+          { id: 'w1', hp: 24 },
+          { id: 'w2', hp: 24 },
+          { id: 'w3', hp: 24 },
+        ],
+        6,
+        24,
+      ),
+    ).toEqual(['w1', 'w2', 'w3']);
+    // ゴーレム64 → 3発、続く近い敵へ残りを配る
+    expect(
+      planMissileVolley(
+        [
+          { id: 'golem', hp: 64 },
+          { id: 'wisp', hp: 24 },
+          { id: 'rusher', hp: 5 },
+        ],
+        6,
+        24,
+      ),
+    ).toEqual(['golem', 'golem', 'golem', 'wisp', 'rusher']);
+    // ボスでも距離順: 手前の大物へ全弾使い切る (上限 count)
+    expect(planMissileVolley([{ id: 'boss', hp: 600 }], 6, 24)).toEqual([
+      'boss', 'boss', 'boss', 'boss', 'boss', 'boss',
     ]);
-    expect(assignMissileTargets(['boss'], 3)).toEqual(['boss', 'boss', 'boss']);
-    expect(assignMissileTargets([], 6)).toEqual([]);
+    expect(planMissileVolley([], 6, 24)).toEqual([]);
   });
 });

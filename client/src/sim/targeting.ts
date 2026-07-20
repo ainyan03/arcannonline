@@ -1,17 +1,30 @@
 import type { Vec2 } from '../../../shared/src/protocol';
 
+export interface MissileCandidate {
+  id: string;
+  /** 実効残りHP (飛行中ミサイルの予約ダメージを差し引いた値) */
+  hp: number;
+}
+
 /**
- * ミサイルの標的割当て。優先度順の候補 (ボス→近い順を想定) へ
- * ラウンドロビンで配り、候補が足りなければ先頭 (最優先) へ重ねる。
+ * ミサイルの標的割当て。近い順の候補へ「撃破に必要な発数」だけ割り当てる
+ * (オーバーキル防止)。ボス優先はせず距離だけで決めるため、プレイヤーは
+ * 撃ちたい相手へ自分から距離を詰めることで狙いをコントロールできる。
+ * 必要数が count に満たなければ余りは撃たない (呼び出し側でコストも発数比例)。
+ * @param candidates 近い順に並んだ候補 (hp <= 0 のものは含めないこと)
  */
-export function assignMissileTargets(
-  candidates: readonly string[],
+export function planMissileVolley(
+  candidates: readonly MissileCandidate[],
   count: number,
+  damage: number,
 ): string[] {
-  if (candidates.length === 0) return [];
   const result: string[] = [];
-  for (let i = 0; i < count; i++) {
-    result.push(candidates[i % candidates.length]);
+  for (const candidate of candidates) {
+    if (result.length >= count) break;
+    const need = Math.ceil(Math.max(candidate.hp, 1) / damage);
+    for (let i = 0; i < need && result.length < count; i++) {
+      result.push(candidate.id);
+    }
   }
   return result;
 }

@@ -144,6 +144,15 @@ export class MissileView {
     });
   }
 
+  /** 指定標的へ飛行中 (未着弾) のミサイル数。オーバーキル防止の予約計算に使う */
+  countInFlight(targetId: string): number {
+    let count = 0;
+    for (const m of this.missiles) {
+      if (!m.done && m.targetId === targetId) count++;
+    }
+    return count;
+  }
+
   /** 毎フレーム進める。二次ベジェで標的の現在表示位置へ吸い込まれる */
   update(now: number): void {
     for (const m of this.missiles) {

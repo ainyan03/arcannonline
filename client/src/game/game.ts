@@ -20,7 +20,7 @@ import {
 } from '../../../shared/src/npc-scripts';
 import {
   AUTO_SHOT_RANGE,
-  MISSILE_BOMB_COST,
+  MISSILE_COST_PER_SHOT,
   MISSILE_COUNT,
   MISSILE_DAMAGE,
   MISSILE_RANGE,
@@ -74,7 +74,7 @@ import { StickUI } from '../ui/stick';
 import { UpdateBannerUI } from '../ui/update-banner';
 import { WaveBannerUI } from '../ui/wave-banner';
 import { LocalPlayerSim } from '../sim/local-player';
-import { assignMissileTargets, isInFront } from '../sim/targeting';
+import { isInFront, planMissileVolley } from '../sim/targeting';
 import {
   WAVE_CALM_MS,
   WAVE_COMPOSITION,
@@ -1665,9 +1665,16 @@ export class Game {
   /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
   /** 追尾ミサイルのボム発射 (月の魔導士)。標的がいなければ撃たない */
   private fireMissiles(now: number): void {
-    const candidates = this.missileCandidates();
-    if (candidates.length === 0) return;
-    if (!this.player.trySpendEnergy(MISSILE_BOMB_COST)) return;
+    const targets = planMissileVolley(
+      this.missileCandidates(),
+      MISSILE_COUNT,
+      MISSILE_DAMAGE,
+    );
+    if (targets.length === 0) return;
+    // 撃破に必要な発数だけ発射し、コストも発数に比例させる
+    if (!this.player.trySpendEnergy(MISSILE_COST_PER_SHOT * targets.length)) {
+      return;
+    }
     this.lastFireAt = now;
     this.player.invulnUntil = Math.max(
       this.player.invulnUntil,
@@ -1678,7 +1685,7 @@ export class Game {
       x: this.player.pos.x,
       y: this.player.pos.y,
       at: Date.now(),
-      targets: assignMissileTargets(candidates, MISSILE_COUNT),
+      targets,
     };
     this.handleMissiles(this.room.selfId, ev, 0);
     this.room.broadcastMissiles(ev);
@@ -1686,27 +1693,35 @@ export class Game {
     this.updateHud();
   }
 
-  /** ミサイルの標的候補: ボス優先、次いで近い順 (索敵距離内の生存敵) */
-  private missileCandidates(): string[] {
+  /**
+   * ミサイルの標的候補: 純粋に近い順 (索敵距離内の生存敵)。
+   * ボス優先はせず、撃ちたい相手へ距離を詰めることで狙いを操作できる。
+   * 実効HPは飛行中ミサイル (自他問わず) の予約ダメージを差し引き、
+   * 撃破予定の敵をスキップしてオーバーキルを防ぐ
+   */
+  private missileCandidates(): { id: string; hp: number; dist: number }[] {
     const px = this.player.pos.x;
     const py = this.player.pos.y;
-    const found: { id: string; dist: number; boss: boolean }[] = [];
+    const found: { id: string; hp: number; dist: number }[] = [];
+    const consider = (id: string, x: number, y: number, hp: number) => {
+      const d = Math.hypot(x - px, y - py);
+      if (d > MISSILE_RANGE) return;
+      const effective = hp - this.missileView.countInFlight(id) * MISSILE_DAMAGE;
+      if (effective <= 0) return;
+      found.push({ id, hp: effective, dist: d });
+    };
     for (const npc of this.localNpcs) {
-      if (!npc.sim.alive) continue;
-      const d = Math.hypot(npc.sim.pos.x - px, npc.sim.pos.y - py);
-      if (d <= MISSILE_RANGE) {
-        found.push({ id: npc.sim.id, dist: d, boss: npc.sim.kind === 'boss' });
+      if (npc.sim.alive) {
+        consider(npc.sim.id, npc.sim.pos.x, npc.sim.pos.y, npc.sim.hp);
       }
     }
     for (const [id, npc] of this.remoteNpcs) {
-      if (npc.sim.mode === 'dead') continue;
-      const d = Math.hypot(npc.sim.lastX - px, npc.sim.lastY - py);
-      if (d <= MISSILE_RANGE) {
-        found.push({ id, dist: d, boss: npc.sim.kind === 'boss' });
+      if (npc.sim.mode !== 'dead') {
+        consider(id, npc.sim.lastX, npc.sim.lastY, npc.sim.hp);
       }
     }
-    found.sort((a, b) => Number(b.boss) - Number(a.boss) || a.dist - b.dist);
-    return found.map((entry) => entry.id);
+    found.sort((a, b) => a.dist - b.dist);
+    return found;
   }
 
   /** ミサイルの標的の現在表示位置 (視覚の吸い込み先・飛行時間の算出に使う) */
@@ -1857,7 +1872,17 @@ export class Game {
       ? 'マジックミサイル'
       : (DANMAKU_SCRIPTS[this.bombScriptId]?.name ?? this.bombScriptId);
     this.fireBtn.setScriptName(scriptName);
-    const estCost = missileBomb ? MISSILE_BOMB_COST : this.estimateSelectedCost();
+    // ミサイルは「今撃ったら何発になるか」の実コストを目安に出す
+    const estCost = missileBomb
+      ? (() => {
+          const planned = planMissileVolley(
+            this.missileCandidates(),
+            MISSILE_COUNT,
+            MISSILE_DAMAGE,
+          ).length;
+          return planned === 0 ? null : MISSILE_COST_PER_SHOT * planned;
+        })()
+      : this.estimateSelectedCost();
     this.fireBtn.setEnabled(
       estCost !== null &&
         this.player.energy >= estCost &&
