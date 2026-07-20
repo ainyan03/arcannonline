@@ -42,6 +42,18 @@
         color: #ffd24d;
         font-size: 14px;
       }
+      /* プレイヤー (仲間) のマーカーを敵より手前に出す */
+      .edge-marker.player {
+        z-index: 2;
+      }
+      .edge-marker.enemy {
+        z-index: 1;
+      }
+      /* 敵マーカーは名前なしの小さな警告色矢印のみ */
+      .edge-marker.enemy .arrow {
+        color: #ff5d75;
+        font-size: 11px;
+      }
       .chat {
         position: fixed;
         left: 8px;

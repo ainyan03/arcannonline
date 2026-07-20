@@ -3,15 +3,26 @@ import * as THREE from 'three';
 /** 画面端からのマージン (NDC)。この内側に収まっていれば「画面内」とみなす */
 const EDGE = 0.93;
 
+/** 距離減衰: この距離以下は等倍・全濃度 */
+const FADE_NEAR = 20;
+/** 距離減衰: この距離以上は下限まで縮小・減光する */
+const FADE_FAR = 150;
+
 export interface MarkerTarget {
   name: string;
   x: number;
   z: number;
+  /** 種別。player は矢印+名前で最前面、enemy はラベルなしの小さな警告色矢印 */
+  kind: 'player' | 'enemy';
+  /** 自機からの距離。遠いほどマーカーを小さく・薄くする */
+  dist: number;
 }
 
 /**
- * 画面外にいる他プレイヤーの方向を示す外周マーカー (矢印+名前)。
- * HTML オーバーレイとして描く。画面内にいる相手のマーカーは隠す。
+ * 画面外の対象の方向を示す外周マーカー (HTML オーバーレイ)。
+ * プレイヤーを優先的に見やすくする: プレイヤーは矢印+名前で敵より手前に、
+ * 敵は名前なしの小さな矢印のみ (多数の「ウィスプ」表記で埋まるのを防ぐ)。
+ * どちらも距離に応じて縮小・減光し、近い脅威・仲間ほど目立つ
  */
 export class EdgeMarkers {
   private readonly root: HTMLElement;
@@ -43,13 +54,16 @@ export class EdgeMarkers {
       let item = this.items.get(id);
       if (!item) {
         const el = document.createElement('div');
-        el.className = 'edge-marker';
+        el.className = `edge-marker ${target.kind}`;
         const arrow = document.createElement('span');
         arrow.className = 'arrow';
         arrow.textContent = '▶';
-        const label = document.createElement('span');
-        label.textContent = target.name;
-        el.append(arrow, label);
+        el.appendChild(arrow);
+        if (target.kind === 'player') {
+          const label = document.createElement('span');
+          label.textContent = target.name;
+          el.appendChild(label);
+        }
         this.root.appendChild(el);
         item = { el, arrow };
         this.items.set(id, item);
@@ -83,9 +97,20 @@ export class EdgeMarkers {
       // CSS 座標系 (y 下向き) での外向き角度
       const angDeg = (Math.atan2(-ey, ex) * 180) / Math.PI;
 
+      // 距離減衰 (0=至近 → 1=遠方)
+      const t = Math.min(
+        Math.max((target.dist - FADE_NEAR) / (FADE_FAR - FADE_NEAR), 0),
+        1,
+      );
+      const scale = 1 - 0.45 * t;
+      const opacity =
+        target.kind === 'player' ? 1 - 0.4 * t : 0.9 - 0.65 * t;
+
       item.el.style.display = '';
       item.el.style.left = `${px}px`;
       item.el.style.top = `${py}px`;
+      item.el.style.opacity = String(opacity);
+      item.el.style.transform = `translate(-50%, -50%) scale(${scale})`;
       item.arrow.style.transform = `rotate(${angDeg}deg)`;
     }
 

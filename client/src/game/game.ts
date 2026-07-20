@@ -565,7 +565,13 @@ export class Game {
         remote.prevHp = remote.sim.hp;
         remote.view.setFlash(now < remote.flashUntil);
         remote.view.animate(now);
-        this.markerTargets.set(id, { name: remote.sim.name, x: s.x, z: s.y });
+        this.markerTargets.set(id, {
+          name: remote.sim.name,
+          x: s.x,
+          z: s.y,
+          kind: 'player',
+          dist: Math.hypot(s.x - this.player.pos.x, s.y - this.player.pos.y),
+        });
         if (id === this.targetId) {
           this.targetRing.position.set(s.x, 0.05, s.y);
           targetVisible = true;
@@ -582,6 +588,11 @@ export class Game {
           name: 'ウィスプ',
           x: npc.sim.pos.x,
           z: npc.sim.pos.y,
+          kind: 'enemy',
+          dist: Math.hypot(
+            npc.sim.pos.x - this.player.pos.x,
+            npc.sim.pos.y - this.player.pos.y,
+          ),
         });
       }
       if (npc.sim.alive && npc.sim.id === this.targetId) {
@@ -595,7 +606,13 @@ export class Game {
       npc.view.sync(s.x, s.y, s.h, s.visible);
       npc.view.animate(now);
       if (s.visible) {
-        this.markerTargets.set(npc.sim.id, { name: 'ウィスプ', x: s.x, z: s.y });
+        this.markerTargets.set(npc.sim.id, {
+          name: 'ウィスプ',
+          x: s.x,
+          z: s.y,
+          kind: 'enemy',
+          dist: Math.hypot(s.x - this.player.pos.x, s.y - this.player.pos.y),
+        });
       }
       if (s.visible && npc.sim.id === this.targetId) {
         this.targetRing.position.set(s.x, 0.05, s.y);
