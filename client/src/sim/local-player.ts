@@ -180,8 +180,15 @@ export class LocalPlayerSim {
       this.vel.y = 0;
       return false;
     }
-    this.pos.x = clamp(this.pos.x + this.vel.x * dt, -BOUND, BOUND);
-    this.pos.y = clamp(this.pos.y + this.vel.y * dt, -BOUND, BOUND);
+    const nextX = this.pos.x + this.vel.x * dt;
+    const nextY = this.pos.y + this.vel.y * dt;
+    this.pos.x = clamp(nextX, -BOUND, BOUND);
+    this.pos.y = clamp(nextY, -BOUND, BOUND);
+    if (cruiseSpeed > 0) {
+      // 止まれないクラスが外周へ正面衝突したまま永久停止しないよう反射する
+      if (this.pos.x !== nextX) this.vel.x = -this.vel.x;
+      if (this.pos.y !== nextY) this.vel.y = -this.vel.y;
+    }
     if (
       resolveObstacles(this.pos, BODY_RADIUS) &&
       this.target &&

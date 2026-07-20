@@ -54,6 +54,14 @@ describe('player classes', () => {
     expect(speedOf(broom)).toBeGreaterThan(0);
   });
 
+  it('the broom witch turns back instead of sticking to the field boundary', () => {
+    const broom = new LocalPlayerSim({ x: 98.9, y: -70 }, 'b', appearance(1));
+    for (let i = 0; i < 120; i++) broom.update(DT, NO_INPUT);
+    expect(broom.pos.x).toBeLessThan(98);
+    expect(broom.getVelocity().x).toBeLessThan(0);
+    expect(speedOf(broom)).toBeGreaterThan(0);
+  });
+
   it('maps every class shot to replayable scripts within the VM budgets', () => {
     const engine = new BulletEngine();
     expect(CLASS_SHOTS).toHaveLength(4);

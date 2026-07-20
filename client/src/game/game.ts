@@ -708,6 +708,7 @@ export class Game {
     this.input.dispose();
     this.chat.dispose();
     this.audio.dispose();
+    this.missileView.dispose();
     this.playerView.dispose();
     for (const remote of this.remotes.values()) remote.view.dispose();
     for (const npc of this.localNpcs) npc.view.dispose();
@@ -1083,7 +1084,7 @@ export class Game {
       ty: attack.targetPos.y,
       npc: npc.id,
     };
-    this.seenFireIds.add(ev.id);
+    this.rememberFireId(ev.id);
     this.engine.startScript(
       NPC_SCRIPT_SOURCES[script],
       ev.seed,
@@ -1322,7 +1323,7 @@ export class Game {
       tx: targetPos?.x,
       ty: targetPos?.y,
     };
-    this.seenFireIds.add(ev.id);
+    this.rememberFireId(ev.id);
     this.engine.startScript(
       source,
       ev.seed,
@@ -1373,7 +1374,7 @@ export class Game {
       vy: sourceVelocity.y,
       at: Date.now(),
     };
-    this.seenFireIds.add(ev.id);
+    this.rememberFireId(ev.id);
     this.engine.startScript(
       PLAYER_SHOT_SOURCES[scriptId],
       ev.seed,
@@ -1424,12 +1425,7 @@ export class Game {
 
   private handleRemoteFire(fromId: string, ev: FireEvent): void {
     if (ev.npc && !npcBelongsToPeer(ev.npc, fromId)) return;
-    if (this.seenFireIds.has(ev.id)) return;
-    this.seenFireIds.add(ev.id);
-    if (this.seenFireIds.size > 1000) {
-      const it = this.seenFireIds.values();
-      for (let i = 0; i < 500; i++) this.seenFireIds.delete(it.next().value as string);
-    }
+    if (!this.rememberFireId(ev.id)) return;
     const source =
       DANMAKU_SCRIPTS[ev.script]?.source ??
       NPC_SCRIPT_SOURCES[ev.script] ??
@@ -1663,7 +1659,6 @@ export class Game {
     if (profile.picture) view.setAvatarUrl(profile.picture, true);
   }
 
-  /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
   /** 追尾ミサイルのボム発射 (月の魔導士)。標的がいなければ撃たない */
   private fireMissiles(now: number): void {
     const targets = planMissileVolley(
@@ -1746,8 +1741,7 @@ export class Game {
    * 同じ式で算出するため追加の同期は不要 (ダメージ確定は担当ピアの計算が正)
    */
   private handleMissiles(fromId: string, ev: MissileEvent, delayMs: number): void {
-    if (this.seenFireIds.has(ev.id)) return;
-    this.seenFireIds.add(ev.id);
+    if (!this.rememberFireId(ev.id)) return;
     const now = performance.now();
     const launches = ev.targets.map((targetId) => {
       const pos = this.missileTargetPos(targetId);
@@ -1792,6 +1786,19 @@ export class Game {
       this.audio.playDefeat();
       if (npc.sim.kind === 'boss') this.onBossDefeated();
     }
+  }
+
+  /** 発射イベントIDを記録し、長時間プレイでも集合を有界に保つ。 */
+  private rememberFireId(id: string): boolean {
+    if (this.seenFireIds.has(id)) return false;
+    this.seenFireIds.add(id);
+    if (this.seenFireIds.size > 1000) {
+      const it = this.seenFireIds.values();
+      for (let i = 0; i < 500; i++) {
+        this.seenFireIds.delete(it.next().value as string);
+      }
+    }
+    return true;
   }
 
   /**

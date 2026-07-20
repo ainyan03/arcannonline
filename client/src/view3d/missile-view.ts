@@ -58,6 +58,7 @@ function makeHaloTexture(): THREE.CanvasTexture {
  */
 export class MissileView {
   private readonly missiles: Missile[] = [];
+  private readonly coreGeometry: THREE.SphereGeometry;
   private readonly coreMaterial: THREE.MeshBasicMaterial;
   private readonly haloMaterial: THREE.SpriteMaterial;
   private readonly trailMaterial: THREE.LineBasicMaterial;
@@ -71,6 +72,7 @@ export class MissileView {
     private readonly scene: THREE.Scene,
     private readonly resolveTarget: MissileTargetResolver,
   ) {
+    this.coreGeometry = new THREE.SphereGeometry(0.26, 8, 6);
     this.coreMaterial = new THREE.MeshBasicMaterial({ color: CORE_COLOR });
     this.haloMaterial = new THREE.SpriteMaterial({
       map: makeHaloTexture(),
@@ -101,10 +103,7 @@ export class MissileView {
       const spread = 1.5 + (i % 3) * 1.2;
 
       const group = new THREE.Group();
-      const core = new THREE.Mesh(
-        new THREE.SphereGeometry(0.26, 8, 6),
-        this.coreMaterial,
-      );
+      const core = new THREE.Mesh(this.coreGeometry, this.coreMaterial);
       group.add(core);
       const halo = new THREE.Sprite(this.haloMaterial);
       halo.scale.set(2.6, 2.6, 1);
@@ -190,23 +189,41 @@ export class MissileView {
       m.group.position.set(x, h, y);
 
       // 軌跡: 先頭へ現在位置を押し込み、古い頂点を順送りにして尾を引く
-      m.trailPositions.pop();
-      m.trailPositions.unshift(new THREE.Vector3(x, h, y));
-      m.trailGeometry.setFromPoints(m.trailPositions);
+      const head = m.trailPositions.pop()!;
+      head.set(x, h, y);
+      m.trailPositions.unshift(head);
+      const positions = m.trailGeometry.getAttribute('position');
+      for (let i = 0; i < m.trailPositions.length; i++) {
+        const p = m.trailPositions[i];
+        positions.setXYZ(i, p.x, p.y, p.z);
+      }
+      positions.needsUpdate = true;
 
       if (t >= 1) {
         m.done = true;
         this.scene.remove(m.group);
         this.scene.remove(m.trail);
         m.trailGeometry.dispose();
-        for (const child of m.group.children) {
-          if (child instanceof THREE.Mesh) child.geometry.dispose();
-        }
         this.onArrive?.(m.lastX, m.lastY);
       }
     }
     for (let i = this.missiles.length - 1; i >= 0; i--) {
       if (this.missiles[i].done) this.missiles.splice(i, 1);
     }
+  }
+
+  /** 進行中エフェクトと共有GPU資源をまとめて解放する。 */
+  dispose(): void {
+    for (const m of this.missiles) {
+      this.scene.remove(m.group);
+      this.scene.remove(m.trail);
+      m.trailGeometry.dispose();
+    }
+    this.missiles.length = 0;
+    this.coreGeometry.dispose();
+    this.coreMaterial.dispose();
+    this.haloMaterial.map?.dispose();
+    this.haloMaterial.dispose();
+    this.trailMaterial.dispose();
   }
 }
