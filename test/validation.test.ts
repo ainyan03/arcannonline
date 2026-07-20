@@ -58,7 +58,9 @@ describe('protocol validation', () => {
       vy: -3,
     });
     expect(parseFireEvent({ ...base, vx: 4 })).toBeNull();
-    expect(parseFireEvent({ ...base, vx: 9, vy: 0 })).toBeNull();
+    // 上限はクラス補正込みの最高速度 (PLAYER_SPEED_MAX = 10)
+    expect(parseFireEvent({ ...base, vx: 9, vy: 0 })).not.toBeNull();
+    expect(parseFireEvent({ ...base, vx: 11, vy: 0 })).toBeNull();
     expect(parseFireEvent({
       ...base,
       target: `${peerId}:npc:0`,

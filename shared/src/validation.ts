@@ -10,7 +10,6 @@ import {
   MAX_PEERS,
   NPC_KINDS,
   NPCS_PER_PEER,
-  PLAYER_SPEED,
   type Appearance,
   type BaseHitEvent,
   type BulletCollisionEvent,
@@ -26,6 +25,7 @@ import {
   type SignalPayload,
   type StatePayload,
 } from './protocol';
+import { PLAYER_SPEED_MAX } from './player-classes';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -215,8 +215,8 @@ export function parseFireEvent(value: unknown): FireEvent | null {
   const hasVelocity = v.vx !== undefined || v.vy !== undefined;
   if (
     hasVelocity &&
-    (!finite(v.vx, -PLAYER_SPEED, PLAYER_SPEED) ||
-      !finite(v.vy, -PLAYER_SPEED, PLAYER_SPEED))
+    (!finite(v.vx, -PLAYER_SPEED_MAX, PLAYER_SPEED_MAX) ||
+      !finite(v.vy, -PLAYER_SPEED_MAX, PLAYER_SPEED_MAX))
   ) {
     return null;
   }

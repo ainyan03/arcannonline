@@ -15,17 +15,21 @@ import {
   resolveObstacles,
   steerAroundObstacles,
 } from '../../../shared/src/obstacles';
+import {
+  classMovementFor,
+  type ClassMovement,
+} from '../../../shared/src/player-classes';
 
 const BOUND = FIELD_SIZE / 2 - 1;
 /** 障害物との衝突に使う自機の体半径 */
 const BODY_RADIUS = 0.5;
 
-/** 速度が目標速度へ追従する速さ (1/s)。小さいほど慣性が強く柔らかい動き */
-const ACCEL_RATE = 8;
 /** タップ移動の到着減速: 残距離×この係数まで速度を落とす */
 const ARRIVE_GAIN = 4;
-/** これ未満の速度は停止とみなす */
+/** これ未満の速度は停止とみなす (巡航クラスは停止しないので使わない) */
 const STOP_EPS = 0.05;
+/** 巡航クラスがタップ目標を「通過した」とみなす距離 (減速せず通り抜ける) */
+const FLYBY_DIST = 2;
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -43,6 +47,8 @@ export class LocalPlayerSim {
   private readonly vel: Vec2 = { x: 0, y: 0 };
   private seq = 0;
   private target: Vec2 | null = null;
+  /** クラス別の移動特性 (見た目プリセットから決まる) */
+  private readonly movement: ClassMovement;
 
   constructor(
     spawn: Vec2,
@@ -50,6 +56,7 @@ export class LocalPlayerSim {
     private readonly appearance?: Appearance,
   ) {
     this.pos = { ...spawn };
+    this.movement = classMovementFor(appearance?.s);
   }
 
   /**
@@ -96,22 +103,27 @@ export class LocalPlayerSim {
   update(dt: number, move: Vec2): boolean {
     this.energy = Math.min(this.energy + ENERGY_REGEN_PER_SEC * dt, ENERGY_MAX);
 
+    const maxSpeed = PLAYER_SPEED * this.movement.speedMul;
+    const cruiseSpeed = PLAYER_SPEED * this.movement.cruiseMul;
+
     // 目標速度を決める (入力方向 or タップ地点への到着減速つき追従)
     let targetVx = 0;
     let targetVy = 0;
     if (move.x !== 0 || move.y !== 0) {
       this.target = null; // キー/スティック入力を優先し自動移動を解除
-      targetVx = move.x * PLAYER_SPEED;
-      targetVy = move.y * PLAYER_SPEED;
+      targetVx = move.x * maxSpeed;
+      targetVy = move.y * maxSpeed;
     } else if (this.target) {
       const dx = this.target.x - this.pos.x;
       const dy = this.target.y - this.pos.y;
       const d = Math.hypot(dx, dy);
-      if (d < 0.15) {
+      // 巡航クラスは目標地点で止まれないため「通過」で解除する (フライバイ)
+      if (d < (cruiseSpeed > 0 ? FLYBY_DIST : 0.15)) {
         this.target = null;
       } else {
-        // 到着間際は減速して行き過ぎ (目標地点の周回) を防ぐ
-        const speed = Math.min(PLAYER_SPEED, d * ARRIVE_GAIN);
+        // 到着間際は減速して行き過ぎを防ぐ (巡航クラスは減速せず通過する)
+        const speed =
+          cruiseSpeed > 0 ? maxSpeed : Math.min(maxSpeed, d * ARRIVE_GAIN);
         // タップ移動も進路上の岩を接線方向へ避ける (正面での膠着防止)。
         // 目標地点より奥の岩は無視し、キー/スティックの手動操作には介入しない
         const dir = steerAroundObstacles(
@@ -127,14 +139,43 @@ export class LocalPlayerSim {
       }
     }
 
+    // 巡航クラス: 入力も目標もない時は現在の向きへ飛び続ける。
+    // 進路上の岩は自動で避ける (止まれないクラスが岩を擦り続けないように)
+    if (cruiseSpeed > 0 && targetVx === 0 && targetVy === 0) {
+      const dir = steerAroundObstacles(
+        this.pos,
+        { x: Math.cos(this.heading), y: Math.sin(this.heading) },
+        BODY_RADIUS,
+        8,
+        1,
+      );
+      targetVx = dir.x * cruiseSpeed;
+      targetVy = dir.y * cruiseSpeed;
+    }
+
     // 慣性: 速度を目標速度へ指数的に追従させる。急な方向転換では
     // 速度ベクトルが徐々に回るため、軌跡が曲線を描く
-    const k = Math.min(1, dt * ACCEL_RATE);
+    const k = Math.min(1, dt * this.movement.accelRate);
     this.vel.x += (targetVx - this.vel.x) * k;
     this.vel.y += (targetVy - this.vel.y) * k;
 
+    // 巡航クラスは最低速度を割らない (減速はできるが完全停止はしない)
+    if (cruiseSpeed > 0) {
+      const sp = Math.hypot(this.vel.x, this.vel.y);
+      if (sp < cruiseSpeed) {
+        if (sp > 0.01) {
+          const scale = cruiseSpeed / sp;
+          this.vel.x *= scale;
+          this.vel.y *= scale;
+        } else {
+          this.vel.x = Math.cos(this.heading) * cruiseSpeed;
+          this.vel.y = Math.sin(this.heading) * cruiseSpeed;
+        }
+      }
+    }
+
     const speed = Math.hypot(this.vel.x, this.vel.y);
-    if (speed < STOP_EPS) {
+    if (cruiseSpeed === 0 && speed < STOP_EPS) {
       this.vel.x = 0;
       this.vel.y = 0;
       return false;
