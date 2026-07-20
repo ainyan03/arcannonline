@@ -49,6 +49,7 @@ import { FireButtonUI } from '../ui/fire-button';
 import { StickUI } from '../ui/stick';
 import { UpdateBannerUI } from '../ui/update-banner';
 import { LocalPlayerSim } from '../sim/local-player';
+import { isInFront } from '../sim/targeting';
 import { RemotePlayerSim } from '../sim/remote-player';
 import {
   LocalNpcSim,
@@ -609,7 +610,8 @@ export class Game {
 
     // 仮想発射ボタンの長押し連射 (クールダウンは fire() 側で効く)
     if (this.fireHeld) this.fire();
-    // 通常ショット: 索敵距離内に敵がいれば自動発射 (エネルギー消費なし)
+    // 通常ショット: 索敵距離内かつ自機前方に敵がいれば自動発射
+    // (エネルギー消費なし)
     this.autoFire(now);
 
     this.updateNpcsToNow(now);
@@ -975,15 +977,15 @@ export class Game {
   }
 
   /**
-   * 通常ショット: 索敵距離内に敵がいる間、自機の向きへランダムに拡散発射する
-   * 基本攻撃 (自動照準はしない。狙いは移動で付ける)。
+   * 通常ショット: 索敵距離内かつ自機の前半面に敵がいる間、自機の向きへ
+   * ランダムに拡散発射する基本攻撃 (自動照準はしない。狙いは移動で付ける)。
    * エネルギーを消費せず、強攻撃 (fire) とは独立したクールダウンで動く。
    * 単発の即時完了スクリプトなので、多段シーケンス保護の ownerHasRun
    * ゲートは通さない (強攻撃の展開中でも通常ショットは撃てる)
    */
   private autoFire(now: number): void {
     if (now - this.lastAutoFireAt < AUTO_SHOT_COOLDOWN_MS) return;
-    if (!this.nearestEnemy(AUTO_SHOT_RANGE)) return;
+    if (!this.nearestEnemyAhead(AUTO_SHOT_RANGE)) return;
     this.lastAutoFireAt = now;
 
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
@@ -1019,14 +1021,17 @@ export class Game {
     this.audio.playAutoFire();
   }
 
-  /** 生存中の敵 (自分担当・リモート担当とも) から最も近いものを拾う */
-  private nearestEnemy(maxDist: number): { id: string; pos: Vec2 } | null {
+  /** 自機前方にいる生存中の敵から、最も近いものを拾う */
+  private nearestEnemyAhead(maxDist: number): { id: string; pos: Vec2 } | null {
     const px = this.player.pos.x;
     const py = this.player.pos.y;
+    const origin = this.player.pos;
+    const heading = this.player.heading;
     let best: { id: string; pos: Vec2 } | null = null;
     let bestDist = maxDist;
     for (const npc of this.localNpcs) {
       if (!npc.sim.alive) continue;
+      if (!isInFront(origin, heading, npc.sim.pos)) continue;
       const d = Math.hypot(npc.sim.pos.x - px, npc.sim.pos.y - py);
       if (d < bestDist) {
         bestDist = d;
@@ -1035,10 +1040,12 @@ export class Game {
     }
     for (const [id, npc] of this.remoteNpcs) {
       if (npc.sim.mode === 'dead') continue;
+      const pos = { x: npc.sim.lastX, y: npc.sim.lastY };
+      if (!isInFront(origin, heading, pos)) continue;
       const d = Math.hypot(npc.sim.lastX - px, npc.sim.lastY - py);
       if (d < bestDist) {
         bestDist = d;
-        best = { id, pos: { x: npc.sim.lastX, y: npc.sim.lastY } };
+        best = { id, pos };
       }
     }
     return best;
