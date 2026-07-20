@@ -8,8 +8,10 @@ import {
 } from '../client/src/sim/wave';
 import { parseNpcStatePayload } from '../shared/src/validation';
 import {
+  BOSS_BASE_HP,
   BOSS_NPC_SLOT,
   NPC_KINDS,
+  bossHpFor,
 } from '../shared/src/protocol';
 import {
   BOSS_SCRIPT_IDS,
@@ -40,6 +42,14 @@ describe('boss npc', () => {
     const dist = Math.hypot(boss.pos.x, boss.pos.y);
     expect(dist).toBeGreaterThanOrEqual(44);
     expect(boss.makeState().k).toBe('boss');
+  });
+
+  it('scales spawn HP with the player count, capped at the validation max', () => {
+    expect(bossHpFor(1)).toBe(BOSS_BASE_HP);
+    expect(bossHpFor(2)).toBe(BOSS_BASE_HP + 600);
+    expect(bossHpFor(3)).toBe(BOSS_BASE_HP + 1200);
+    expect(bossHpFor(20)).toBe(NPC_KINDS.boss.maxHp);
+    expect(bossHpFor(0)).toBe(BOSS_BASE_HP);
   });
 
   it('validates the boss slot and rejects beyond it', () => {

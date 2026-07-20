@@ -29,7 +29,11 @@ export class EnemyView {
   private readonly hpCanvas: HTMLCanvasElement;
   private readonly hpTexture: THREE.CanvasTexture;
   private readonly phase: number;
-  private readonly maxHp: number;
+  /**
+   * HPバーの分母。人数スケールするボスは種別の上限 (検証用) より低いHPで
+   * 湧くため、実際に観測した最大HPを分母にする (湧き直後 = 満タン表示)
+   */
+  private maxHp = 1;
   private readonly barColor: string;
   private readonly bobAmount: number;
   private hp: number;
@@ -41,7 +45,8 @@ export class EnemyView {
     readonly kind: NpcKind = 'wisp',
   ) {
     const look = KIND_LOOKS[kind];
-    this.maxHp = NPC_KINDS[kind].maxHp;
+    // ボス以外は種別の上限 = 湧きHP。ボスは最初の setState で実HPに合わせる
+    this.maxHp = kind === 'boss' ? 1 : NPC_KINDS[kind].maxHp;
     this.hp = this.maxHp;
     this.barColor = look.bar;
     // 重い型ほど浮遊の揺れを小さくして質量感を出す
@@ -155,6 +160,10 @@ export class EnemyView {
   }
 
   setState(hp: number, mode: NpcMode): void {
+    if (hp > this.maxHp) {
+      this.maxHp = hp;
+      this.redrawHp();
+    }
     if (hp !== this.hp) {
       this.hp = hp;
       this.redrawHp();

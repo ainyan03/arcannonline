@@ -20,8 +20,10 @@ import {
 } from '../../../shared/src/npc-scripts';
 import {
   AUTO_SHOT_RANGE,
+  MISSILE_BOSS_DAMAGE,
   MISSILE_COST_PER_SHOT,
   MISSILE_COUNT,
+  bossHpFor,
   MISSILE_DAMAGE,
   MISSILE_RANGE,
   MISSILE_RANGE_OFFSET,
@@ -942,13 +944,15 @@ export class Game {
         now,
         'boss',
       );
+      // 召喚時の接続人数でHPをスケールさせる (多人数の合算火力への対策)
+      sim.hp = bossHpFor(this.remotes.size + 1);
       // リーダー交代の引き継ぎ: 同ラウンドで観測済みの HP から再開する
       if (this.bossDefeatedRound === wave.round) {
         // 撃破済みの墓標も新リーダーが配信し、さらに後から来た参加者へ伝える
         sim.hp = 0;
         sim.mode = 'dead';
       } else if (this.lastBossRound === wave.round && this.lastBossHp !== null) {
-        sim.hp = Math.max(1, this.lastBossHp);
+        sim.hp = Math.max(1, Math.min(this.lastBossHp, sim.hp));
       }
       const view = new EnemyView(sim.id, true, 'boss');
       view.sync(sim.pos.x, sim.pos.y, sim.heading);
@@ -1772,7 +1776,10 @@ export class Game {
       this.pendingMissileHits.splice(i, 1);
       const npc = this.localNpcs.find((entry) => entry.sim.id === hit.targetId);
       if (!npc || !npc.sim.alive) continue; // 先に倒れていたら不発
-      const died = npc.sim.takeHit(MISSILE_DAMAGE, now);
+      // 必中で手離れが良いぶん、対ボスだけダメージを半減する
+      const damage =
+        npc.sim.kind === 'boss' ? MISSILE_BOSS_DAMAGE : MISSILE_DAMAGE;
+      const died = npc.sim.takeHit(damage, now);
       if (!died) {
         npc.sim.provoke(hit.shooterId, now);
         continue;

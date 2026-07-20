@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 26;
+export const PROTO_VERSION = 27;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -75,8 +75,13 @@ export const MAX_FIRE_BATCH = 8;
 
 /** 1回のボムで放つミサイル数 */
 export const MISSILE_COUNT = 6;
-/** 1発のダメージ (ウィスプは2発。対ボスの溶かしすぎ防止で控えめ) */
+/** 1発のダメージ (ウィスプは2発) */
 export const MISSILE_DAMAGE = 16;
+/**
+ * 対ボスのダメージ (半減)。必中で手離れが良いぶん対ボス効率は低くし、
+ * ボス削りの主役は狙撃・ボム・通常弾に残す
+ */
+export const MISSILE_BOSS_DAMAGE = 8;
 /**
  * ミサイルの見かけ速度 (距離/秒)。飛行時間は距離に比例し、
  * どの距離でもホーミングの速度が一定に見える
@@ -263,8 +268,21 @@ export const NPC_KINDS: Record<NpcKind, { name: string; maxHp: number }> = {
   rusher: { name: 'インプ', maxHp: 14 },
   turret: { name: 'ガーゴイル', maxHp: 40 },
   shield: { name: 'ゴーレム', maxHp: 64 },
-  boss: { name: 'アークファントム', maxHp: 900 },
+  boss: { name: 'アークファントム', maxHp: 3600 },
 };
+
+/** ボスの基礎HPと、参加人数1人ごとの加算 (maxHp は検証上限を兼ねる) */
+export const BOSS_BASE_HP = 900;
+export const BOSS_HP_PER_EXTRA_PLAYER = 600;
+
+/** 召喚時の接続人数に応じたボスHP */
+export function bossHpFor(playerCount: number): number {
+  const extra = Math.max(playerCount - 1, 0);
+  return Math.min(
+    BOSS_BASE_HP + BOSS_HP_PER_EXTRA_PLAYER * extra,
+    NPC_KINDS.boss.maxHp,
+  );
+}
 
 /**
  * ボスは「その時点で最小のピアIDを持つクライアント (リーダー)」が
