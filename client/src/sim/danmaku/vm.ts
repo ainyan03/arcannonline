@@ -144,7 +144,8 @@ function callFn(name: string, args: number[], st: RunState): number {
         args[1] ?? 10,
         args[2] ?? 1,
         args[3] ?? 0.2,
-        args[4] ?? 60,
+        // 残存時間の既定は4秒 (射程 ≒ 速度×秒。上限は engine 側で8秒にキャップ)
+        args[4] ?? 4,
       );
       return 0;
     }

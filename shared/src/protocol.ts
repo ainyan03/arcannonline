@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 3;
+export const PROTO_VERSION = 4;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;

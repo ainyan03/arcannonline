@@ -33,7 +33,13 @@ export function bulletCost(dur: number, radius: number): number {
   );
 }
 const CULL_BOUND = FIELD_SIZE / 2 + 10;
-const BULLET_TTL_TICKS = TICK_RATE * 60;
+/**
+ * 弾の残存時間の上限 (スクリプトが明示指定しても超えられない)。
+ * フィールド全域を貫通する長射程を防ぎ、避けた弾が画面外で漂い続けないようにする
+ */
+const BULLET_TTL_TICKS = TICK_RATE * 8;
+/** 残存時間の既定値 (秒)。射程 ≒ 速度 × この秒数 (典型速度 10〜18 で 40〜72) */
+const DEFAULT_BULLET_LIFE_SEC = 4;
 /** 衝突判定の空間ハッシュのセルサイズ (最大弾半径×2 より大きいこと) */
 const CELL = 2;
 const RAD_TO_DEG = 180 / Math.PI;
@@ -287,7 +293,7 @@ export class BulletEngine {
     advanceTicks: number,
     fireId: string,
     spawnIdx: number,
-    lifeSec = 60,
+    lifeSec = DEFAULT_BULLET_LIFE_SEC,
     inheritedVelocity: Vec2 = { x: 0, y: 0 },
   ): void {
     if (this.alive >= this.maxBullets) return;

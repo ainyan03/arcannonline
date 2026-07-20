@@ -33,6 +33,19 @@ describe('BulletEngine', () => {
       .toEqual([1, 2, 3]);
   });
 
+  it('expires bullets after the default 4s life and caps requested life at 8s', () => {
+    const engine = new BulletEngine();
+    // 速度0で場外カリングを避け、寿命だけで消えることを確認する
+    // (位置を離し、所有者の異なる弾同士の相殺も避ける)
+    engine.startScript('fire(0, 0, 1, 0.2);', 1, () => ({ x: -20, y: 0 }), 0, 'a');
+    engine.startScript('fire(0, 0, 1, 0.2, 60);', 1, () => ({ x: 20, y: 0 }), 0, 'b');
+    for (let i = 0; i < 60 * 4 + 2; i++) engine.tick();
+    expect(engine.aliveOwned('a')).toBe(0); // 既定4秒で消滅
+    expect(engine.aliveOwned('b')).toBe(1); // 明示指定は4秒を超えて生存
+    for (let i = 0; i < 60 * 4 + 2; i++) engine.tick();
+    expect(engine.aliveOwned('b')).toBe(0); // ただし上限8秒でキャップ
+  });
+
   it('adds the firing source velocity to every spawned bullet', () => {
     const engine = new BulletEngine();
     engine.startScript(

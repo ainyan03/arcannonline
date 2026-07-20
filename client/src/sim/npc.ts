@@ -21,7 +21,12 @@ const INTERP_DELAY_MS = 280;
 /** 未来側スナップショット未着時に速度で外挿する上限 */
 const EXTRAPOLATE_MAX_MS = 200;
 
-export const NPC_HIT_RADIUS = 0.72;
+/**
+ * プレイヤー弾が敵に当たる判定半径。見た目よりやや大きめにして、
+ * リモートNPCの表示遅延 (補間280ms) や担当ピア側との位置ずれがあっても
+ * 「狙って撃ったのにすり抜ける」体感を減らす
+ */
+export const NPC_HIT_RADIUS = 1.2;
 
 export interface NpcTarget {
   id: string;
