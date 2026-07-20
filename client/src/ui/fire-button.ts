@@ -1,5 +1,5 @@
 /**
- * 画面右下の仮想発射ボタンとスクリプト切替チップ。
+ * 画面右下の仮想発射ボタンと魔法プリセット切替チップ。
  * ボタンは押している間 held 状態になり、ゲーム側がクールダウン毎に連射する。
  */
 export class FireButtonUI {
@@ -21,7 +21,7 @@ export class FireButtonUI {
     this.chip = document.createElement('button');
     this.chip.type = 'button';
     this.chip.className = 'script-chip';
-    this.chip.setAttribute('aria-label', '弾幕スクリプトを切り替え');
+    this.chip.setAttribute('aria-label', '魔法プリセットを切り替え');
     container.appendChild(this.chip);
 
     const setHeld = (held: boolean) => this.onHoldChange?.(held);

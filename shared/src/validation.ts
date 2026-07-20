@@ -1,13 +1,16 @@
 import {
+  BASE_ID,
+  BASE_MAX_HP,
+  BASE_SYNC_HITS_MAX,
   FIELD_SIZE,
   MAX_HP,
   MAX_ID_TOKEN_LEN,
   MAX_PEERS,
-  MAX_SCRIPT_SRC_LEN,
   NPC_MAX_HP,
   NPCS_PER_PEER,
   PLAYER_SPEED,
   type Appearance,
+  type BaseHitEvent,
   type BulletCollisionEvent,
   type BulletRef,
   type FireEvent,
@@ -199,8 +202,12 @@ export function parseFireEvent(value: unknown): FireEvent | null {
   ) {
     return null;
   }
-  if (v.target !== undefined && !isPeerId(v.target) && !isNpcId(v.target)) return null;
-  if (v.src !== undefined && !shortString(v.src, MAX_SCRIPT_SRC_LEN)) return null;
+  if (
+    v.target !== undefined &&
+    v.target !== BASE_ID &&
+    !isPeerId(v.target) &&
+    !isNpcId(v.target)
+  ) return null;
   if (v.npc !== undefined && !isNpcId(v.npc)) return null;
   const hasTargetPos = v.tx !== undefined || v.ty !== undefined;
   if (hasTargetPos && (!finite(v.tx, -FIELD_SIZE, FIELD_SIZE) || !finite(v.ty, -FIELD_SIZE, FIELD_SIZE))) {
@@ -220,7 +227,6 @@ export function parseFireEvent(value: unknown): FireEvent | null {
     tx: v.tx as number | undefined,
     ty: v.ty as number | undefined,
     npc: v.npc as string | undefined,
-    src: v.src as string | undefined,
   };
 }
 
@@ -239,6 +245,14 @@ function parseBulletCollision(value: unknown): BulletCollisionEvent | null {
   const b = parseBulletRef(v.b);
   if (!a || !b || !finite(v.da, 1, 1000) || !finite(v.db, 1, 1000)) return null;
   return { id: v.id, a, b, da: v.da, db: v.db };
+}
+
+function parseBaseHit(value: unknown): BaseHitEvent | null {
+  const v = record(value);
+  if (!v || !shortString(v.id, MAX_SIGNAL_ID_LEN) || v.id.length === 0) return null;
+  if (!isNpcId(v.npc) || !finite(v.damage, 1, BASE_MAX_HP)) return null;
+  if (!finite(v.at, 0, 10_000_000_000_000)) return null;
+  return { id: v.id, npc: v.npc, damage: v.damage, at: v.at };
 }
 
 export function parseReliableMessage(value: unknown): ReliableMessage | null {
@@ -268,6 +282,17 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
     case 'bcoll': {
       const ev = parseBulletCollision(v.ev);
       return ev ? { type: 'bcoll', ev } : null;
+    }
+    case 'base-hit': {
+      const ev = parseBaseHit(v.ev);
+      return ev ? { type: 'base-hit', ev } : null;
+    }
+    case 'base-sync': {
+      if (!Array.isArray(v.hits) || v.hits.length > BASE_SYNC_HITS_MAX) return null;
+      const hits = v.hits.map(parseBaseHit);
+      return hits.every((hit): hit is BaseHitEvent => hit !== null)
+        ? { type: 'base-sync', hits }
+        : null;
     }
     case 'chat':
       return shortString(v.text, 200) && v.text.trim().length > 0

@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 6;
+export const PROTO_VERSION = 7;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -167,6 +167,26 @@ export const NPC_STATE_INTERVAL_MS = 200;
 export const NPC_MAX_HP = 24;
 export const NPC_RESPAWN_MS = 6_000;
 
+// --- 共通拠点 ---------------------------------------------------------------
+
+/** フィールド中央にある全プレイヤー共通の防衛対象 */
+export const BASE_ID = 'arcane-beacon';
+export const BASE_MAX_HP = 100;
+export const BASE_HIT_RADIUS = 2.4;
+/** この時間を過ぎたダメージは回復したものとして扱う */
+export const BASE_DAMAGE_WINDOW_MS = 30_000;
+/** 途中参加同期に含める直近命中数の上限 */
+export const BASE_SYNC_HITS_MAX = 256;
+
+export interface BaseHitEvent {
+  id: string;
+  /** 命中弾を発射したNPC。担当ピアはID先頭から検証できる */
+  npc: string;
+  damage: number;
+  /** 発射担当クライアントのepoch ms */
+  at: number;
+}
+
 export type NpcMode = 'spawn' | 'wander' | 'chase' | 'attack' | 'dead';
 
 /** 非信頼チャネルで送る、担当NPCの最新スナップショット */
@@ -235,12 +255,7 @@ export interface FireEvent {
   ty?: number;
   /** NPCによる発射なら担当ピア配下のNPC ID */
   npc?: string;
-  /** カスタムスクリプトのソース (script が同梱スクリプトにない場合に使用) */
-  src?: string;
 }
-
-/** 共有されるカスタムスクリプトソースの長さ上限 */
-export const MAX_SCRIPT_SRC_LEN = 4_000;
 
 /** 共有される GitHub 認証トークン (Firebase ID トークン JWT) の長さ上限 */
 export const MAX_ID_TOKEN_LEN = 4_096;
@@ -277,6 +292,8 @@ export type ReliableMessage =
    */
   | { type: 'bkill'; f: string; i: number }
   | { type: 'bcoll'; ev: BulletCollisionEvent }
+  | { type: 'base-hit'; ev: BaseHitEvent }
+  | { type: 'base-sync'; hits: BaseHitEvent[] }
   | { type: 'chat'; text: string }
   /**
    * GitHub 認証済みプロフィールの申告 (Firebase ID トークン)。受信側は

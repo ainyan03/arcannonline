@@ -11,6 +11,7 @@ import {
   PRESENCE_INTERVAL_MS,
   PROTO_VERSION,
   STALE_PRESENCE_MS,
+  type BaseHitEvent,
   type FireEvent,
   type BulletCollisionEvent,
   type NostrContent,
@@ -50,6 +51,8 @@ export class Mesh {
   onChat?: (id: string, text: string) => void;
   onBulletKill?: (fireId: string, spawnIdx: number) => void;
   onBulletCollision?: (id: string, ev: BulletCollisionEvent) => void;
+  onBaseHit?: (id: string, ev: BaseHitEvent) => void;
+  onBaseSync?: (id: string, hits: BaseHitEvent[]) => void;
   /** GitHub 認証済みプロフィール (Firebase ID トークン) の申告 */
   onProfile?: (id: string, token: string | null) => void;
   /** ピアが申告したプロトコルバージョン (プレゼンス/PEX 受信のたびに発火) */
@@ -133,6 +136,18 @@ export class Mesh {
   broadcastBulletCollision(ev: BulletCollisionEvent): void {
     for (const e of this.peers.values()) {
       if (e.peer.isOpen) e.peer.sendReliable({ type: 'bcoll', ev });
+    }
+  }
+
+  broadcastBaseHit(ev: BaseHitEvent): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'base-hit', ev });
+    }
+  }
+
+  broadcastBaseSync(hits: BaseHitEvent[]): void {
+    for (const e of this.peers.values()) {
+      if (e.peer.isOpen) e.peer.sendReliable({ type: 'base-sync', hits });
     }
   }
 
@@ -339,6 +354,12 @@ export class Mesh {
         break;
       case 'bcoll':
         this.onBulletCollision?.(fromId, msg.ev);
+        break;
+      case 'base-hit':
+        this.onBaseHit?.(fromId, msg.ev);
+        break;
+      case 'base-sync':
+        this.onBaseSync?.(fromId, msg.hits);
         break;
       case 'chat':
         this.onChat?.(fromId, String(msg.text).slice(0, 200));

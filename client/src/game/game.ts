@@ -11,18 +11,21 @@ import {
   NPC_FIRE_SCRIPT_SOURCE,
 } from '../../../shared/src/npc-scripts';
 import {
+  BASE_HIT_RADIUS,
+  BASE_ID,
+  BASE_MAX_HP,
   BULLET_INHERIT_VELOCITY,
   ENERGY_MAX,
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
   MAX_HP,
-  MAX_SCRIPT_SRC_LEN,
   NPC_STATE_INTERVAL_MS,
   NPCS_PER_PEER,
   PROTO_VERSION,
   STATE_INTERVAL_MS,
   TICK_MS,
   type Appearance,
+  type BaseHitEvent,
   type FireEvent,
   type Vec2,
 } from '../../../shared/src/protocol';
@@ -34,11 +37,11 @@ import { GameAudio } from '../audio/game-audio';
 import { GameRoom } from '../net/room';
 import { iceSummary } from '../net/rtc-debug';
 import { benchEngine } from '../sim/danmaku/bench';
+import { BaseDefense } from '../sim/base-defense';
 import { BulletEngine } from '../sim/danmaku/engine';
-import { parse } from '../sim/danmaku/parser';
 import { ChatUI } from '../ui/chat';
+import { BaseStatusUI } from '../ui/base-status';
 import { FireButtonUI } from '../ui/fire-button';
-import { ScriptEditorUI } from '../ui/script-editor';
 import { StickUI } from '../ui/stick';
 import { UpdateBannerUI } from '../ui/update-banner';
 import { LocalPlayerSim } from '../sim/local-player';
@@ -56,6 +59,7 @@ import { EdgeMarkers, type MarkerTarget } from '../view3d/edge-markers';
 import { EnemyView } from '../view3d/enemy-view';
 import { Particles } from '../view3d/particles';
 import { PlayerView } from '../view3d/player-view';
+import { BaseView } from '../view3d/base-view';
 import { createWorld, type World } from '../view3d/world';
 import { cameraRelativeDir, Keyboard } from './input';
 import { BulletSync } from './bullet-sync';
@@ -126,6 +130,10 @@ export class Game {
   private readonly seenFireIds = new Set<string>();
   private readonly bulletSync: BulletSync;
   private readonly profiles: RemoteProfiles;
+  private readonly baseDefense = new BaseDefense();
+  private readonly baseView: BaseView;
+  private readonly baseStatus: BaseStatusUI;
+  private lastBaseHp = BASE_MAX_HP;
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -160,9 +168,7 @@ export class Game {
   private readonly targetRing: THREE.Mesh;
   private readonly projTmp = new THREE.Vector3();
   private readonly chat: ChatUI;
-  private readonly editor: ScriptEditorUI;
   private readonly fireBtn: FireButtonUI;
-  private customSource: string | null = null;
   private accountUnsubscribe: () => void = () => {};
   private animationFrameId = 0;
   private readonly intervalIds: number[] = [];
@@ -178,6 +184,10 @@ export class Game {
     // 参加ボタンのユーザー操作中に初期化し、ブラウザの自動再生制限を解除する。
     void this.audio.unlock();
     this.world = createWorld(container);
+    this.baseView = new BaseView();
+    this.world.scene.add(this.baseView.object);
+    this.baseStatus = new BaseStatusUI(container);
+    this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP);
     this.profiles = new RemoteProfiles((id, profile) => {
       const remote = this.remotes.get(id);
       if (!remote) return;
@@ -272,25 +282,6 @@ export class Game {
       this.stickVec = v && Math.hypot(v.x, v.y) > 0.25 ? v : null;
     };
 
-    this.editor = new ScriptEditorUI(container);
-    this.editor.onApply = (source) => {
-      if (source.length > MAX_SCRIPT_SRC_LEN) {
-        return `スクリプトが長すぎます (${source.length}/${MAX_SCRIPT_SRC_LEN})`;
-      }
-      try {
-        parse(source);
-      } catch (err) {
-        return String(err instanceof Error ? err.message : err);
-      }
-      this.customSource = source;
-      this.scriptId = 'custom';
-      this.updateHud();
-      return null;
-    };
-    // 過去に適用したカスタムスクリプトを復元 (保存時に構文検証済み)
-    const savedScript = localStorage.getItem('arcn-custom-script');
-    if (savedScript) this.customSource = savedScript;
-
     // ターゲット指定中の相手の足元に表示するリング
     this.targetRing = new THREE.Mesh(
       new THREE.RingGeometry(0.9, 1.25, 32),
@@ -319,6 +310,7 @@ export class Game {
       this.sendStateNow();
       this.sendNpcsNow();
       this.sendProfileNow();
+      this.room.broadcastBaseSync(this.baseDefense.snapshot());
     };
     this.room.onState = (id, state) => {
       const now = performance.now();
@@ -388,6 +380,18 @@ export class Game {
     this.room.onFire = (id, ev) => this.handleRemoteFire(id, ev);
     this.room.onBulletKill = (fireId, spawnIdx) =>
       this.engine.killByFire(fireId, spawnIdx);
+    this.room.onBaseHit = (id, event) => {
+      if (!npcBelongsToPeer(event.npc, id)) return;
+      // event.at は送信者の時計。handleRemoteFire と同様に推定時計ずれを
+      // 差し引いて自分の時計に直し、ずれた端末間で受理判定が食い違って
+      // 魔力灯 HP の見え方が分岐するのを防ぐ
+      const skew = this.remotes.get(id)?.sim.clockSkewMin;
+      const at = Number.isFinite(skew) ? event.at + (skew as number) : event.at;
+      if (this.baseDefense.apply({ ...event, at })) this.showBaseHit();
+    };
+    this.room.onBaseSync = (_id, hits) => {
+      this.baseDefense.merge(hits);
+    };
     this.room.onChat = (id, text) => {
       const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
       // リモートの通常発言を「* 」だけでシステム通知扱いにしない。
@@ -492,6 +496,7 @@ export class Game {
       // 回ったタブが「攻撃の効かない置物」として他画面に残り続けてしまう
       this.checkNpcHits(now);
       this.checkHits(now);
+      this.checkBaseHits();
       this.updateHud();
     }, STATE_INTERVAL_MS));
 
@@ -580,6 +585,8 @@ export class Game {
     this.tickToNow(now);
     this.checkNpcHits(now);
     this.checkHits(now);
+    this.checkBaseHits();
+    this.updateBaseView(now);
 
     // 無敵時間中は点滅、被弾直後は発光フラッシュ
     const invuln = now < this.player.invulnUntil;
@@ -685,14 +692,8 @@ export class Game {
     const dt = Math.min(Math.max((now - this.lastNpcUpdate) / 1000, 0), 0.25);
     if (dt <= 0) return;
     this.lastNpcUpdate = now;
-    const targets: NpcTarget[] = [
-      { id: this.room.selfId, pos: this.player.pos },
-    ];
-    for (const [id, remote] of this.remotes) {
-      if (remote.sim.hasPos) {
-        targets.push({ id, pos: { x: remote.sim.lastX, y: remote.sim.lastY } });
-      }
-    }
+    // 拠点防衛ループ: 敵はプレイヤーではなく中央の魔力灯を主目標にする。
+    const targets: NpcTarget[] = [{ id: BASE_ID, pos: { x: 0, y: 0 } }];
     for (const npc of this.localNpcs) {
       const attack = npc.sim.update(dt, now, targets);
       if (attack) this.fireNpc(npc.sim, attack);
@@ -733,6 +734,45 @@ export class Game {
     this.audio.playEnemyFire(
       Math.hypot(origin.x - this.player.pos.x, origin.y - this.player.pos.y),
     );
+  }
+
+  /** 担当NPCの弾だけを権威的に拠点へ命中させ、全ピアへ共有する。 */
+  private checkBaseHits(): void {
+    this.engine.forEachNearby(0, 0, BASE_HIT_RADIUS, (bullet, index) => {
+      if (!npcBelongsToPeer(bullet.owner, this.room.selfId)) return;
+      const rr = bullet.radius + BASE_HIT_RADIUS;
+      if (bullet.x * bullet.x + bullet.y * bullet.y > rr * rr) return;
+      const event: BaseHitEvent = {
+        id: crypto.randomUUID(),
+        npc: bullet.owner,
+        damage: Math.min(Math.max(bullet.dur, 1), 100),
+        at: Date.now(),
+      };
+      if (!this.baseDefense.apply(event)) return;
+      this.engine.killAt(index);
+      this.room.broadcastBulletKill(bullet.fireId, bullet.spawnIdx);
+      this.room.broadcastBaseHit(event);
+      this.showBaseHit();
+    });
+  }
+
+  private showBaseHit(): void {
+    this.particles.burst(0, 0, new THREE.Color(0x6bcfff), 1.25);
+    this.audio.playHit();
+  }
+
+  private updateBaseView(now: number): void {
+    const hp = this.baseDefense.hp();
+    this.baseView.update(now, hp, BASE_MAX_HP);
+    this.baseStatus.update(hp, BASE_MAX_HP);
+    if (this.lastBaseHp > 0 && hp <= 0) {
+      this.chat.addLine('', '* 魔力灯が消えました。周囲の敵を退けて再点火を待とう', true);
+      this.audio.playDefeat();
+    } else if (this.lastBaseHp <= 0 && hp > 0) {
+      this.chat.addLine('', '* 魔力灯が再点火しました', true);
+      this.audio.playJoin();
+    }
+    this.lastBaseHp = hp;
   }
 
   private checkNpcHits(now: number): void {
@@ -842,10 +882,7 @@ export class Game {
   private fire(): void {
     const now = performance.now();
     if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
-    const source =
-      this.scriptId === 'custom'
-        ? this.customSource
-        : (DANMAKU_SCRIPTS[this.scriptId]?.source ?? null);
+    const source = DANMAKU_SCRIPTS[this.scriptId]?.source ?? null;
     if (!source) return;
 
     // 発射ゲート: 前の発射指示 (自分のスクリプト) が完了するまで重ねられない。
@@ -886,8 +923,6 @@ export class Game {
       target: this.targetId ?? undefined,
       tx: targetPos?.x,
       ty: targetPos?.y,
-      // カスタムスクリプトはソースを同梱して他クライアントでも再現できるようにする
-      src: this.scriptId === 'custom' ? source : undefined,
     };
     this.seenFireIds.add(ev.id);
     this.engine.startScript(
@@ -918,8 +953,7 @@ export class Game {
     }
     const source =
       DANMAKU_SCRIPTS[ev.script]?.source ??
-      (ev.script === NPC_FIRE_SCRIPT_ID ? NPC_FIRE_SCRIPT_SOURCE : undefined) ??
-      (ev.src && ev.src.length <= MAX_SCRIPT_SRC_LEN ? ev.src : null);
+      (ev.script === NPC_FIRE_SCRIPT_ID ? NPC_FIRE_SCRIPT_SOURCE : null);
     if (!source) return;
     // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える。
     // ev.at は相手の時計なので、位置同期から推定した時計ずれを差し引いて
@@ -966,6 +1000,7 @@ export class Game {
    */
   private resolveTargetPosition(targetId?: string): Vec2 | null {
     if (!targetId) return null;
+    if (targetId === BASE_ID) return { x: 0, y: 0 };
     if (targetId === this.room.selfId) {
       return { x: this.player.pos.x, y: this.player.pos.y };
     }
@@ -998,19 +1033,12 @@ export class Game {
         this.chat.open();
         return;
       }
-      if (e.code === 'KeyE') {
-        this.editor.toggle();
-        return;
-      }
       const scriptIds = Object.keys(DANMAKU_SCRIPTS);
       const digit = e.code.match(/^Digit([1-9])$/);
       if (digit) {
         const idx = Number(digit[1]) - 1;
         if (idx < scriptIds.length) {
           this.scriptId = scriptIds[idx];
-          this.updateHud();
-        } else if (idx === scriptIds.length && this.customSource) {
-          this.scriptId = 'custom';
           this.updateHud();
         }
       }
@@ -1112,7 +1140,6 @@ export class Game {
   /** 発射スクリプトを次へ切り替える (仮想ボタン横のチップ用) */
   private cycleScript(): void {
     const ids = Object.keys(DANMAKU_SCRIPTS);
-    if (this.customSource) ids.push('custom');
     const idx = ids.indexOf(this.scriptId);
     this.scriptId = ids[(idx + 1) % ids.length];
     this.updateHud();
@@ -1220,10 +1247,7 @@ export class Game {
 
   /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
   private estimateSelectedCost(): number | null {
-    const source =
-      this.scriptId === 'custom'
-        ? this.customSource
-        : (DANMAKU_SCRIPTS[this.scriptId]?.source ?? null);
+    const source = DANMAKU_SCRIPTS[this.scriptId]?.source ?? null;
     if (!source) return null;
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
     const target = this.resolveTargetPosition(this.targetId ?? undefined);
@@ -1237,10 +1261,7 @@ export class Game {
   }
 
   private updateHud(): void {
-    const scriptName =
-      this.scriptId === 'custom'
-        ? '自作スクリプト'
-        : (DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId);
+    const scriptName = DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId;
     this.fireBtn.setScriptName(scriptName);
     const estCost = this.estimateSelectedCost();
     this.fireBtn.setEnabled(
@@ -1261,11 +1282,12 @@ export class Game {
       `peers: ${this.room.peerCount}\n` +
       `ice: ${iceSummary()}\n` +
       `${this.room.stats}\n` +
+      `魔力灯: ${Math.ceil(this.baseDefense.hp())}/${BASE_MAX_HP}\n` +
       `enemies: ${this.localNpcs.filter((npc) => npc.sim.alive).length}` +
       ` local / ${this.remoteNpcs.size} remote\n` +
       `bullets: ${this.engine.aliveCount} fps: ${this.fps}\n` +
-      `[Space]発射 [1-5]切替: ${scriptName}\n` +
-      `[Enter]チャット [E]スクリプト編集\n` +
+      `[Space]発射 [1-4]魔法切替: ${scriptName}\n` +
+      `[Enter]チャット\n` +
       `target: ${targetName}`;
   }
 }

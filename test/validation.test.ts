@@ -100,4 +100,22 @@ describe('protocol validation', () => {
       ev: { ...message.ev, a: { ...message.ev.a, o: 'invalid' } },
     })).toBeNull();
   });
+
+  it('validates base targets, hit events, and bounded late-join sync', () => {
+    const npcId = `${peerId}:npc:0`;
+    expect(parseFireEvent({
+      id: 'fire-base', script: 'npc-wisp-burst', seed: 1,
+      x: 10, y: 0, dir: Math.PI, at: Date.now(),
+      target: 'arcane-beacon', tx: 0, ty: 0, npc: npcId,
+    })).toMatchObject({ target: 'arcane-beacon' });
+    const event = { id: 'base-hit-1', npc: npcId, damage: 1, at: Date.now() };
+    expect(parseReliableMessage({ type: 'base-hit', ev: event }))
+      .toEqual({ type: 'base-hit', ev: event });
+    expect(parseReliableMessage({ type: 'base-sync', hits: [event] }))
+      .toEqual({ type: 'base-sync', hits: [event] });
+    expect(parseReliableMessage({ type: 'base-hit', ev: { ...event, npc: 'bad' } }))
+      .toBeNull();
+    expect(parseReliableMessage({ type: 'base-sync', hits: Array(257).fill(event) }))
+      .toBeNull();
+  });
 });

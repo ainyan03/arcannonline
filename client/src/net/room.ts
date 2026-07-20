@@ -2,6 +2,7 @@ import {
   APP_ID,
   NOSTR_RELAYS,
   ROOM_NAME,
+  type BaseHitEvent,
   type BulletCollisionEvent,
   type FireEvent,
   type NpcStatePayload,
@@ -67,6 +68,16 @@ export class GameRoom {
     this.mesh.onBulletCollision = fn;
   }
 
+  set onBaseHit(fn: ((id: string, ev: BaseHitEvent) => void) | undefined) {
+    this.mesh.onBaseHit = fn;
+  }
+
+  set onBaseSync(
+    fn: ((id: string, hits: BaseHitEvent[]) => void) | undefined,
+  ) {
+    this.mesh.onBaseSync = fn;
+  }
+
   /** ピアが申告したプロトコルバージョンの通知 (更新案内バナーの契機) */
   set onPeerVersion(fn: ((id: string, version: number) => void) | undefined) {
     this.mesh.onPeerVersion = fn;
@@ -113,6 +124,14 @@ export class GameRoom {
 
   broadcastBulletCollision(ev: BulletCollisionEvent): void {
     this.mesh.broadcastBulletCollision(ev);
+  }
+
+  broadcastBaseHit(ev: BaseHitEvent): void {
+    this.mesh.broadcastBaseHit(ev);
+  }
+
+  broadcastBaseSync(hits: BaseHitEvent[]): void {
+    this.mesh.broadcastBaseSync(hits);
   }
 
   broadcastProfile(token: string): void {

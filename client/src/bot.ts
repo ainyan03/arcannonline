@@ -10,6 +10,7 @@ import {
   NPC_FIRE_SCRIPT_ID,
 } from '../../shared/src/npc-scripts';
 import {
+  BASE_ID,
   FIELD_SIZE,
   NPC_STATE_INTERVAL_MS,
   NPCS_PER_PEER,
@@ -54,12 +55,6 @@ export function startBot(): void {
     { length: NPCS_PER_PEER },
     (_, i) => new LocalNpcSim(`${room.selfId}:npc:${i}`, performance.now()),
   );
-  // NPC の追跡対象にするため、リモートの最新位置を保持する
-  const remotePos = new Map<string, { x: number; y: number; at: number }>();
-  room.onState = (id, state) => {
-    remotePos.set(id, { x: state.x, y: state.y, at: performance.now() });
-  };
-
   const fireNpc = (npc: LocalNpcSim, targetId: string, tx: number, ty: number) => {
     room.broadcastFire({
       id: crypto.randomUUID(),
@@ -90,12 +85,8 @@ export function startBot(): void {
       sent++;
     }
 
-    // 担当NPCのAIを進める (追跡対象 = 自分 + 既知のリモート)
-    const targets: NpcTarget[] = [{ id: room.selfId, pos: sim.pos }];
-    for (const [id, p] of remotePos) {
-      if (now - p.at > 10_000) remotePos.delete(id);
-      else targets.push({ id, pos: p });
-    }
+    // 通常クライアントと同様、担当NPCは中央の魔力灯を狙う。
+    const targets: NpcTarget[] = [{ id: BASE_ID, pos: { x: 0, y: 0 } }];
     for (const npc of npcs) {
       const attack = npc.update(dt, now, targets);
       if (attack) fireNpc(npc, attack.targetId, attack.targetPos.x, attack.targetPos.y);
