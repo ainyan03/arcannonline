@@ -2,6 +2,15 @@ import * as THREE from 'three';
 import { NPC_KINDS, type NpcKind, type NpcMode } from '../../../shared/src/protocol';
 import { disposeObject3D } from './dispose';
 
+/** HP減少を視認できる白色フラッシュの長さ。連続命中時は延長する。 */
+const HIT_FLASH_MS = 150;
+
+interface FlashMaterial {
+  material: THREE.MeshLambertMaterial;
+  emissive: THREE.Color;
+  intensity: number;
+}
+
 /** 種別ごとの見た目パラメータ */
 const KIND_LOOKS: Record<
   NpcKind,
@@ -36,6 +45,11 @@ export class EnemyView {
   private maxHp = 1;
   private readonly barColor: string;
   private readonly bobAmount: number;
+  /** 敵固有の発光へ正確に戻すため、マテリアルごとの初期値を保持する。 */
+  private readonly flashMaterials: FlashMaterial[] = [];
+  private flashUntil = 0;
+  private flashing = false;
+  private stateInitialized = false;
   private hp: number;
   private mode: NpcMode = 'spawn';
 
@@ -129,6 +143,23 @@ export class EnemyView {
       tail.position.set(-0.86, 0.98, 0);
       this.body.add(tail);
     }
+    const seenMaterials = new Set<THREE.MeshLambertMaterial>();
+    this.body.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      for (const material of materials) {
+        if (!(material instanceof THREE.MeshLambertMaterial)) continue;
+        if (seenMaterials.has(material)) continue;
+        seenMaterials.add(material);
+        this.flashMaterials.push({
+          material,
+          emissive: material.emissive.clone(),
+          intensity: material.emissiveIntensity,
+        });
+      }
+    });
     this.body.scale.multiplyScalar(look.scale);
     this.object.add(this.body);
 
@@ -165,14 +196,19 @@ export class EnemyView {
       this.redrawHp();
     }
     if (hp !== this.hp) {
+      if (this.stateInitialized && hp < this.hp && mode !== 'dead') {
+        this.flashUntil = performance.now() + HIT_FLASH_MS;
+      }
       this.hp = hp;
       this.redrawHp();
     }
+    this.stateInitialized = true;
     this.mode = mode;
     if (mode === 'dead') this.object.visible = false;
   }
 
   animate(now: number): void {
+    this.setFlash(now < this.flashUntil);
     const wave = Math.sin(now * 0.004 + this.phase);
     this.body.position.y = 0.22 + wave * this.bobAmount;
     this.body.rotation.z = wave * 0.06;
@@ -183,6 +219,20 @@ export class EnemyView {
   /** scene から外す際に、このビュー専用の WebGL リソースを解放する。 */
   dispose(): void {
     disposeObject3D(this.object);
+  }
+
+  private setFlash(on: boolean): void {
+    if (on === this.flashing) return;
+    this.flashing = on;
+    for (const entry of this.flashMaterials) {
+      if (on) {
+        entry.material.emissive.setHex(0xffffff);
+        entry.material.emissiveIntensity = 1.8;
+      } else {
+        entry.material.emissive.copy(entry.emissive);
+        entry.material.emissiveIntensity = entry.intensity;
+      }
+    }
   }
 
   private redrawHp(): void {
