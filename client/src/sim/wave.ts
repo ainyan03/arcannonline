@@ -55,9 +55,9 @@ export function waveAggression(tier: number): number {
  * 倒された敵は次の再出現からこの編成に従う (生存中の敵は変化しない)
  */
 export const WAVE_COMPOSITION: readonly (readonly NpcKind[])[] = [
-  ['wisp', 'wisp', 'wisp', 'wisp'],
-  ['wisp', 'wisp', 'wisp', 'rusher'],
-  ['wisp', 'wisp', 'rusher', 'turret'],
-  ['wisp', 'rusher', 'turret', 'shield'],
-  ['rusher', 'rusher', 'turret', 'shield'],
+  ['wisp', 'wisp', 'wisp', 'wisp', 'wisp', 'wisp', 'wisp', 'wisp'],
+  ['wisp', 'wisp', 'wisp', 'wisp', 'wisp', 'wisp', 'rusher', 'rusher'],
+  ['wisp', 'wisp', 'wisp', 'wisp', 'rusher', 'rusher', 'turret', 'turret'],
+  ['wisp', 'wisp', 'wisp', 'rusher', 'rusher', 'turret', 'turret', 'shield'],
+  ['wisp', 'wisp', 'rusher', 'rusher', 'rusher', 'turret', 'turret', 'shield'],
 ];

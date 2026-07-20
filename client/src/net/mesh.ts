@@ -31,6 +31,15 @@ import {
   selectPexDialCandidates,
 } from './admission';
 
+/**
+ * 他ピアへ申告するプロトコルバージョン。開発ビルド (vite dev) は申告しない:
+ * 未公開の版数を本番クライアントへ見せると、まだ配信されていない更新への
+ * バナーが出てしまう (v は省略可能な advisory フィールド)
+ */
+const ADVERTISED_PROTO_VERSION: number | undefined = import.meta.env.DEV
+  ? undefined
+  : PROTO_VERSION;
+
 const ENV_SEEN_MAX = 2_000;
 /** プレゼンス即時応答のレート制限 */
 const PRESENCE_REPLY_MIN_MS = 2_000;
@@ -176,7 +185,7 @@ export class Mesh {
     const now = performance.now();
     if (!force && now - this.lastPresenceSentAt < PRESENCE_REPLY_MIN_MS) return;
     this.lastPresenceSentAt = now;
-    this.publish({ t: 'presence', v: PROTO_VERSION });
+    this.publish({ t: 'presence', v: ADVERTISED_PROTO_VERSION });
   }
 
   /** 退室を通知し、全接続を閉じる */
@@ -402,7 +411,11 @@ export class Mesh {
     for (const [id, e] of this.peers) {
       if (e.peer.isOpen) openIds.push(id);
     }
-    entry.peer.sendReliable({ type: 'pex', peers: openIds, v: PROTO_VERSION });
+    entry.peer.sendReliable({
+      type: 'pex',
+      peers: openIds,
+      v: ADVERTISED_PROTO_VERSION,
+    });
   }
 
   private cleanup(): void {

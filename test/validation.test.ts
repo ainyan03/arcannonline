@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NPCS_PER_PEER } from '../shared/src/protocol';
 import {
   parseAppearance,
   parseFireEvent,
@@ -74,9 +75,13 @@ describe('protocol validation', () => {
     };
     expect(parseRealtimeMessage({ type: 'npcs', states: [npc] }))
       .toMatchObject({ type: 'npcs', states: [{ id: npc.id, mode: 'chase' }] });
-    // 上限 (NPCS_PER_PEER = 4) を超えるバッチは拒否する
-    expect(parseRealtimeMessage({ type: 'npcs', states: [npc, npc, npc, npc, npc] }))
-      .toBeNull();
+    // 上限 (NPCS_PER_PEER) を超えるバッチは拒否する
+    expect(
+      parseRealtimeMessage({
+        type: 'npcs',
+        states: Array.from({ length: NPCS_PER_PEER + 1 }, () => npc),
+      }),
+    ).toBeNull();
     expect(parseRealtimeMessage({
       type: 'npcs', states: [{ ...npc, id: 'invalid:npc:0' }],
     })).toBeNull();
