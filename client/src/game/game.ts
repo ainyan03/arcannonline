@@ -20,6 +20,11 @@ import {
 } from '../../../shared/src/npc-scripts';
 import {
   AUTO_SHOT_RANGE,
+  MISSILE_BOMB_COST,
+  MISSILE_COUNT,
+  MISSILE_DAMAGE,
+  MISSILE_RANGE,
+  MISSILE_TRAVEL_MS,
   BASE_HIT_RADIUS,
   BASE_ID,
   BASE_MAX_HP,
@@ -41,6 +46,7 @@ import {
   type FireEvent,
   type ChatLogEntry,
   type NpcKind,
+  type MissileEvent,
   type NpcStatePayload,
   type Vec2,
 } from '../../../shared/src/protocol';
@@ -66,7 +72,7 @@ import { StickUI } from '../ui/stick';
 import { UpdateBannerUI } from '../ui/update-banner';
 import { WaveBannerUI } from '../ui/wave-banner';
 import { LocalPlayerSim } from '../sim/local-player';
-import { isInFront } from '../sim/targeting';
+import { assignMissileTargets, isInFront } from '../sim/targeting';
 import {
   WAVE_CALM_MS,
   WAVE_COMPOSITION,
@@ -92,6 +98,7 @@ import { Particles } from '../view3d/particles';
 import { PlayerView } from '../view3d/player-view';
 import { BaseView } from '../view3d/base-view';
 import { createObstacles } from '../view3d/obstacle-view';
+import { MissileView } from '../view3d/missile-view';
 import { createWorld, type World } from '../view3d/world';
 import { cameraRelativeDir, Keyboard } from './input';
 import { BulletSync } from './bullet-sync';
@@ -215,6 +222,14 @@ export class Game {
   private readonly classStyle: number | undefined;
   /** クラス (見た目プリセット) で固定されるボムのスクリプトID */
   private readonly bombScriptId: string;
+  /** 追尾ミサイルの視覚エフェクト */
+  private readonly missileView: MissileView;
+  /** 自分担当の標的へ到達予定のミサイル (到達時刻に必中ダメージを確定) */
+  private readonly pendingMissileHits: {
+    targetId: string;
+    shooterId: string;
+    arriveAt: number;
+  }[] = [];
   private lastFireAt = 0;
   private lastAutoFireAt = 0;
   private viewportW = 0;
@@ -253,6 +268,21 @@ export class Game {
     this.baseView = new BaseView();
     this.world.scene.add(this.baseView.object);
     this.world.scene.add(createObstacles());
+    // ミサイルは視覚と判定を分離: 表示は標的の現在表示位置へ吸い込まれる
+    // 曲線 (端末ごとに違ってよい)、ダメージは担当ピアが到達時刻に確定する
+    this.missileView = new MissileView(this.world.scene, (id) => {
+      const local = this.localNpcs.find((npc) => npc.sim.id === id);
+      if (local?.sim.alive) return { x: local.sim.pos.x, y: local.sim.pos.y };
+      const remote = this.remoteNpcs.get(id);
+      if (remote && remote.sim.mode !== 'dead') {
+        return { x: remote.sim.lastX, y: remote.sim.lastY };
+      }
+      return null;
+    });
+    this.missileView.onArrive = (x, y) => {
+      this.particles.burst(x, y, new THREE.Color(0xbf99ff), 1.6);
+      this.audio.playHit();
+    };
     this.baseStatus = new BaseStatusUI(container);
     this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP, true);
     this.profiles = new RemoteProfiles((id, profile) => {
@@ -468,6 +498,15 @@ export class Game {
       }
     };
     this.room.onFire = (id, ev) => this.handleRemoteFire(id, ev);
+    this.room.onMissiles = (id, ev) => {
+      // 伝送遅延ぶんを差し引き、全端末でほぼ同時刻に着弾させる
+      const skew = this.remotes.get(id)?.sim.clockSkewMin;
+      const delay = Math.max(
+        0,
+        Date.now() - ev.at - (Number.isFinite(skew) ? (skew as number) : 0),
+      );
+      this.handleMissiles(id, ev, Math.min(delay, MISSILE_TRAVEL_MS));
+    };
     this.room.onBulletKill = (fireId, spawnIdx) =>
       this.engine.killByFire(fireId, spawnIdx);
     this.room.onBaseHit = (id, event) => {
@@ -800,6 +839,7 @@ export class Game {
 
     this.bulletView.sync(this.engine.bullets, this.room.selfId);
     this.particles.update(dt);
+    this.missileView.update(now);
 
     this.camera.update(
       this.worldPosTmp.set(this.player.pos.x, 0, this.player.pos.y),
@@ -826,6 +866,7 @@ export class Game {
     const wave = waveStateAt(this.roomNow());
     this.announceWaveTransition(wave);
     this.manageBoss(wave, now);
+    this.processMissileHits(now);
     const waveMod = {
       // ボス段は雑魚が再出現せず、戦いの焦点がボスに移る
       // (撃破されたボスもこの抑止で再出現しない)
@@ -1227,6 +1268,11 @@ export class Game {
   private fire(): void {
     const now = performance.now();
     if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
+    // 月の魔導士のボムは追尾ミサイル (DSL 弾幕ではない特殊経路)
+    if (this.classStyle === 2) {
+      this.fireMissiles(now);
+      return;
+    }
     const source = DANMAKU_SCRIPTS[this.bombScriptId]?.source ?? null;
     if (!source) return;
 
@@ -1619,6 +1665,95 @@ export class Game {
   }
 
   /** 選択中スクリプトのコスト目安 (シード固定なので乱数分は概算) */
+  /** 追尾ミサイルのボム発射 (月の魔導士)。標的がいなければ撃たない */
+  private fireMissiles(now: number): void {
+    const candidates = this.missileCandidates();
+    if (candidates.length === 0) return;
+    if (!this.player.trySpendEnergy(MISSILE_BOMB_COST)) return;
+    this.lastFireAt = now;
+    this.player.invulnUntil = Math.max(
+      this.player.invulnUntil,
+      now + BOMB_INVULN_MS,
+    );
+    const ev: MissileEvent = {
+      id: crypto.randomUUID(),
+      x: this.player.pos.x,
+      y: this.player.pos.y,
+      at: Date.now(),
+      targets: assignMissileTargets(candidates, MISSILE_COUNT),
+    };
+    this.handleMissiles(this.room.selfId, ev, 0);
+    this.room.broadcastMissiles(ev);
+    this.audio.playFire();
+    this.updateHud();
+  }
+
+  /** ミサイルの標的候補: ボス優先、次いで近い順 (索敵距離内の生存敵) */
+  private missileCandidates(): string[] {
+    const px = this.player.pos.x;
+    const py = this.player.pos.y;
+    const found: { id: string; dist: number; boss: boolean }[] = [];
+    for (const npc of this.localNpcs) {
+      if (!npc.sim.alive) continue;
+      const d = Math.hypot(npc.sim.pos.x - px, npc.sim.pos.y - py);
+      if (d <= MISSILE_RANGE) {
+        found.push({ id: npc.sim.id, dist: d, boss: npc.sim.kind === 'boss' });
+      }
+    }
+    for (const [id, npc] of this.remoteNpcs) {
+      if (npc.sim.mode === 'dead') continue;
+      const d = Math.hypot(npc.sim.lastX - px, npc.sim.lastY - py);
+      if (d <= MISSILE_RANGE) {
+        found.push({ id, dist: d, boss: npc.sim.kind === 'boss' });
+      }
+    }
+    found.sort((a, b) => Number(b.boss) - Number(a.boss) || a.dist - b.dist);
+    return found.map((entry) => entry.id);
+  }
+
+  /** ミサイル発射の適用 (自分の発射・リモート発射の共通経路) */
+  private handleMissiles(fromId: string, ev: MissileEvent, delayMs: number): void {
+    if (this.seenFireIds.has(ev.id)) return;
+    this.seenFireIds.add(ev.id);
+    const remaining = Math.max(MISSILE_TRAVEL_MS - delayMs, 50);
+    const now = performance.now();
+    this.missileView.launch(ev.x, ev.y, ev.targets, now, remaining);
+    // 自分担当の標的ぶんだけ、到達時刻に必中ダメージを確定する
+    // (弾同士の相殺は経由しない)
+    for (const targetId of ev.targets) {
+      if (!npcBelongsToPeer(targetId, this.room.selfId)) continue;
+      this.pendingMissileHits.push({
+        targetId,
+        shooterId: fromId,
+        arriveAt: now + remaining,
+      });
+    }
+  }
+
+  /** 到達時刻を過ぎたミサイルの必中ダメージを、担当NPCへ確定する */
+  private processMissileHits(now: number): void {
+    for (let i = this.pendingMissileHits.length - 1; i >= 0; i--) {
+      const hit = this.pendingMissileHits[i];
+      if (now < hit.arriveAt) continue;
+      this.pendingMissileHits.splice(i, 1);
+      const npc = this.localNpcs.find((entry) => entry.sim.id === hit.targetId);
+      if (!npc || !npc.sim.alive) continue; // 先に倒れていたら不発
+      const died = npc.sim.takeHit(MISSILE_DAMAGE, now);
+      if (!died) {
+        npc.sim.provoke(hit.shooterId, now);
+        continue;
+      }
+      this.particles.burst(
+        npc.sim.pos.x,
+        npc.sim.pos.y,
+        new THREE.Color(0x9b63da),
+        npc.sim.kind === 'boss' ? 3 : 1.2,
+      );
+      this.audio.playDefeat();
+      if (npc.sim.kind === 'boss') this.onBossDefeated();
+    }
+  }
+
   /**
    * ボムの自動照準: ボス優先、次いで最寄りの生存敵。
    * 見つからなければ null (aim 系スクリプトは自機の向きへ発射される)
@@ -1696,13 +1831,16 @@ export class Game {
   }
 
   private updateHud(): void {
-    const scriptName = DANMAKU_SCRIPTS[this.bombScriptId]?.name ?? this.bombScriptId;
+    const missileBomb = this.classStyle === 2;
+    const scriptName = missileBomb
+      ? 'マジックミサイル'
+      : (DANMAKU_SCRIPTS[this.bombScriptId]?.name ?? this.bombScriptId);
     this.fireBtn.setScriptName(scriptName);
-    const estCost = this.estimateSelectedCost();
+    const estCost = missileBomb ? MISSILE_BOMB_COST : this.estimateSelectedCost();
     this.fireBtn.setEnabled(
       estCost !== null &&
         this.player.energy >= estCost &&
-        !this.engine.ownerHasRun(this.room.selfId),
+        (missileBomb || !this.engine.ownerHasRun(this.room.selfId)),
     );
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +

@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 24;
+export const PROTO_VERSION = 25;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -66,6 +66,36 @@ export const AUTO_SHOT_COOLDOWN_MS = 100;
 export const AUTO_SHOT_RANGE = 40;
 /** 1つのReliableメッセージへまとめる通常弾イベント上限 */
 export const MAX_FIRE_BATCH = 8;
+
+// --- 追尾ミサイル (月の魔導士のボム) ---------------------------------------
+// 見た目は曲線軌道のホーミング演出 (各クライアントの自由 = 同期不要)、
+// 内部は発射時に標的をロックし、一定時間後に必中でダメージが入る。
+// 通常弾のパイプラインを通らないため、弾同士の相殺では消えない。
+// ダメージの確定は標的NPCの担当ピアが行う (既存の権威モデルと同じ)
+
+/** 1回のボムで放つミサイル数 */
+export const MISSILE_COUNT = 6;
+/** 1発のダメージ (ウィスプを一撃) */
+export const MISSILE_DAMAGE = 24;
+/** 発射から必中までの時間 */
+export const MISSILE_TRAVEL_MS = 900;
+/** ボムとしてのエネルギーコスト */
+export const MISSILE_BOMB_COST = 120;
+/** 1イベントに載るミサイル数の上限 (検証用) */
+export const MISSILE_MAX_PER_EVENT = 8;
+/** ミサイルの索敵距離 */
+export const MISSILE_RANGE = 70;
+
+export interface MissileEvent {
+  id: string;
+  /** 発射位置 (視覚エフェクトの起点) */
+  x: number;
+  y: number;
+  /** 発射時刻 (送信者の時計)。受信側は経過ぶんを差し引いて到達を計る */
+  at: number;
+  /** 標的NPC ID の列 (同じ標的へ複数発を重ねてよい) */
+  targets: string[];
+}
 
 /** 途中参加者へ引き継ぐ直近チャット発言数の上限 */
 export const CHAT_LOG_MAX = 30;
@@ -342,6 +372,8 @@ export type ReliableMessage =
   | { type: 'fire'; ev: FireEvent }
   /** 高頻度の通常弾を短時間まとめたもの。各イベントの時刻・seedは個別に保持する */
   | { type: 'fires'; events: FireEvent[] }
+  /** 追尾ミサイル (発射時ロック・一定時間後に必中。相殺なし) */
+  | { type: 'missiles'; ev: MissileEvent }
   /**
    * 弾の消滅通知 (被弾で消費した弾など)。弾は「発射イベントID f + その
    * スクリプトが何発目に生成したか i」で全クライアント共通に特定できる

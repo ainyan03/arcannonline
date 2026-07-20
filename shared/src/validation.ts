@@ -7,6 +7,7 @@ import {
   MAX_ID_TOKEN_LEN,
   CHAT_LOG_MAX,
   MAX_FIRE_BATCH,
+  MISSILE_MAX_PER_EVENT,
   MAX_PEERS,
   NPC_KINDS,
   NPCS_PER_PEER,
@@ -16,6 +17,7 @@ import {
   type BulletRef,
   type ChatLogEntry,
   type FireEvent,
+  type MissileEvent,
   type NostrContent,
   type NpcKind,
   type NpcStatePayload,
@@ -312,6 +314,24 @@ export function parseReliableMessage(value: unknown): ReliableMessage | null {
       return events.every((event): event is FireEvent => event !== null)
         ? { type: 'fires', events }
         : null;
+    }
+    case 'missiles': {
+      const ev = record(v.ev);
+      if (!ev || !shortString(ev.id, MAX_SIGNAL_ID_LEN) || ev.id.length === 0) return null;
+      if (!finite(ev.x, -FIELD_SIZE, FIELD_SIZE) || !finite(ev.y, -FIELD_SIZE, FIELD_SIZE)) return null;
+      if (!finite(ev.at, 0, 10_000_000_000_000)) return null;
+      if (
+        !Array.isArray(ev.targets) ||
+        ev.targets.length === 0 ||
+        ev.targets.length > MISSILE_MAX_PER_EVENT ||
+        !ev.targets.every(isNpcId)
+      ) {
+        return null;
+      }
+      return {
+        type: 'missiles',
+        ev: { id: ev.id, x: ev.x, y: ev.y, at: ev.at, targets: [...ev.targets] },
+      };
     }
     case 'bkill':
       return shortString(v.f, MAX_SIGNAL_ID_LEN) && v.f.length > 0 && integer(v.i, 0, 100_000)

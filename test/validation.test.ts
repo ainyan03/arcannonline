@@ -126,6 +126,30 @@ describe('protocol validation', () => {
     ).toBeNull();
   });
 
+  it('validates missile events', () => {
+    const ev = {
+      id: 'missile-1',
+      x: 0,
+      y: 0,
+      at: 1_000,
+      targets: [`${peerId}:npc:0`, `${peerId}:npc:1`],
+    };
+    expect(parseReliableMessage({ type: 'missiles', ev }))
+      .toMatchObject({ type: 'missiles', ev: { targets: ev.targets } });
+    expect(
+      parseReliableMessage({ type: 'missiles', ev: { ...ev, targets: [] } }),
+    ).toBeNull();
+    expect(
+      parseReliableMessage({
+        type: 'missiles',
+        ev: { ...ev, targets: Array.from({ length: 9 }, () => ev.targets[0]) },
+      }),
+    ).toBeNull();
+    expect(
+      parseReliableMessage({ type: 'missiles', ev: { ...ev, targets: ['x'] } }),
+    ).toBeNull();
+  });
+
   it('validates collision damage messages and bullet ownership', () => {
     const npcId = `${peerId}:npc:0`;
     const message = {

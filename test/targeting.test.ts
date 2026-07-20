@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isInFront } from '../client/src/sim/targeting';
+import { assignMissileTargets, isInFront } from '../client/src/sim/targeting';
 
 describe('isInFront', () => {
   const origin = { x: 2, y: 3 };
@@ -14,5 +14,15 @@ describe('isInFront', () => {
     expect(isInFront(origin, 0, { x: -8, y: 3 })).toBe(false);
     expect(isInFront(origin, 0, { x: 2, y: 13 })).toBe(false);
     expect(isInFront(origin, 0, origin)).toBe(false);
+  });
+});
+
+describe('assignMissileTargets', () => {
+  it('round-robins across candidates and stacks extras on the first', () => {
+    expect(assignMissileTargets(['a', 'b', 'c'], 6)).toEqual([
+      'a', 'b', 'c', 'a', 'b', 'c',
+    ]);
+    expect(assignMissileTargets(['boss'], 3)).toEqual(['boss', 'boss', 'boss']);
+    expect(assignMissileTargets([], 6)).toEqual([]);
   });
 });
