@@ -97,13 +97,20 @@ export function missileTravelMs(distance: number): number {
 }
 /**
  * 1発あたりのエネルギーコスト。撃破に必要な発数だけ発射するため
- * (オーバーキル防止)、コストも発数に比例する (満射 6発 = 120)
+ * (オーバーキル防止)、コストも発数に比例する (満射 6発 = 72)。
+ * 敵弾を相殺できないデメリットを織り込み、回転率重視で安めにしてある
  */
-export const MISSILE_COST_PER_SHOT = 20;
+export const MISSILE_COST_PER_SHOT = 12;
 /** 1イベントに載るミサイル数の上限 (検証用) */
 export const MISSILE_MAX_PER_EVENT = 8;
-/** ミサイルの索敵距離 */
-export const MISSILE_RANGE = 70;
+/**
+ * ミサイルの索敵円の半径。円の中心は自機から前方へ MISSILE_RANGE_OFFSET
+ * ずらしてあり、「見ている範囲の敵を優先的にロックする」感覚になる
+ * (前方は offset+range=60 まで届き、背後は range-offset=30 まで)
+ */
+export const MISSILE_RANGE = 45;
+/** 索敵円の中心を自機の向きへ前方オフセットする距離 */
+export const MISSILE_RANGE_OFFSET = 15;
 
 export interface MissileEvent {
   id: string;

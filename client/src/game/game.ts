@@ -24,6 +24,7 @@ import {
   MISSILE_COUNT,
   MISSILE_DAMAGE,
   MISSILE_RANGE,
+  MISSILE_RANGE_OFFSET,
   MISSILE_STAGGER_MS,
   MISSILE_TRAVEL_MAX_MS,
   missileTravelMs,
@@ -1694,17 +1695,20 @@ export class Game {
   }
 
   /**
-   * ミサイルの標的候補: 純粋に近い順 (索敵距離内の生存敵)。
-   * ボス優先はせず、撃ちたい相手へ距離を詰めることで狙いを操作できる。
+   * ミサイルの標的候補: 自機の前方へオフセットした索敵円の中心に近い順。
+   * 「見ている範囲の敵を優先的にロックする」感覚になり、撃ちたい相手へ
+   * 向き直る・距離を詰めることで狙いを操作できる (ボス優先はしない)。
    * 実効HPは飛行中ミサイル (自他問わず) の予約ダメージを差し引き、
    * 撃破予定の敵をスキップしてオーバーキルを防ぐ
    */
   private missileCandidates(): { id: string; hp: number; dist: number }[] {
-    const px = this.player.pos.x;
-    const py = this.player.pos.y;
+    const cx =
+      this.player.pos.x + Math.cos(this.player.heading) * MISSILE_RANGE_OFFSET;
+    const cy =
+      this.player.pos.y + Math.sin(this.player.heading) * MISSILE_RANGE_OFFSET;
     const found: { id: string; hp: number; dist: number }[] = [];
     const consider = (id: string, x: number, y: number, hp: number) => {
-      const d = Math.hypot(x - px, y - py);
+      const d = Math.hypot(x - cx, y - cy);
       if (d > MISSILE_RANGE) return;
       const effective = hp - this.missileView.countInFlight(id) * MISSILE_DAMAGE;
       if (effective <= 0) return;
