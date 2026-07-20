@@ -256,6 +256,7 @@ export class Mesh {
       case 'bye':
         this.dropPeer(from, 'bye');
         this.presenceSeen.delete(from);
+        this.peerVersions.delete(from);
         break;
       case 'signal':
         if (content.env.to === this.selfId && content.env.from === from) {
@@ -485,10 +486,15 @@ export class Mesh {
       if (now - seen > STALE_PRESENCE_MS) {
         this.dropPeer(id, 'stale');
         this.presenceSeen.delete(id);
+        this.peerVersions.delete(id);
       }
     }
     for (const [id, t] of this.presenceSeen) {
-      if (now - t > STALE_PRESENCE_MS) this.presenceSeen.delete(id);
+      if (now - t > STALE_PRESENCE_MS) {
+        this.presenceSeen.delete(id);
+        // 申告バージョンも居なくなったピアの分は忘れる (再接続時に再学習される)
+        this.peerVersions.delete(id);
+      }
     }
   }
 

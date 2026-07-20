@@ -79,6 +79,27 @@ export function isBlocked(x: number, y: number, margin: number): boolean {
 }
 
 /**
+ * from→to の射線が岩に遮られるか (魔力灯コライダーは含まない)。
+ * 敵の発射判断用: 弾は岩で消えるため、遮られている間は撃っても無駄になる。
+ * margin は弾半径ぶんの余裕 (小さめにして「岩の縁ぎりぎりは通る」を許す)
+ */
+export function lineOfFireBlocked(from: Vec2, to: Vec2, margin = 0.25): boolean {
+  const vx = to.x - from.x;
+  const vy = to.y - from.y;
+  const len2 = vx * vx + vy * vy;
+  for (const o of OBSTACLES) {
+    const t = len2 > 0
+      ? Math.min(Math.max(((o.x - from.x) * vx + (o.y - from.y) * vy) / len2, 0), 1)
+      : 0;
+    const dx = from.x + vx * t - o.x;
+    const dy = from.y + vy * t - o.y;
+    const r = o.r + margin;
+    if (dx * dx + dy * dy <= r * r) return true;
+  }
+  return false;
+}
+
+/**
  * 進行方向の先を塞ぐ障害物を避ける操舵。
  * 押し出し (resolveObstacles) だけだと、障害物の中心へ正面から向かう軌道で
  * 押し出しと速度が真逆になり接線成分が生まれず膠着する。そこで移動前に

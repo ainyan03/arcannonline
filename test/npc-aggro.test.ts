@@ -15,15 +15,23 @@ function makeTargets(npc: LocalNpcSim) {
   ];
 }
 
+/** ランダムな湧き位置だと岩が射線に挟まり得るため、岩のない場所へ固定する */
+function placeClear(npc: LocalNpcSim): void {
+  npc.pos.x = 70;
+  npc.pos.y = -40;
+}
+
 describe('NPC aggro', () => {
   it('prefers the base over a closer player while lit', () => {
     const npc = new LocalNpcSim(`${OWNER}:npc:0`, 0, 'wisp');
+    placeClear(npc);
     const attack = npc.update(1 / 60, READY_AT, makeTargets(npc));
     expect(attack?.targetId).toBe(BASE_ID);
   });
 
   it('retaliates against the attacker, then returns to the base', () => {
     const npc = new LocalNpcSim(`${OWNER}:npc:0`, 0, 'wisp');
+    placeClear(npc);
     npc.update(1 / 60, READY_AT, makeTargets(npc)); // 初撃 (拠点向け)
     npc.provoke(PLAYER, 9_000);
     const retaliation = npc.update(1 / 60, 9_000, makeTargets(npc));
@@ -35,6 +43,7 @@ describe('NPC aggro', () => {
 
   it('hunts the nearest player when the base is unlit (absent from targets)', () => {
     const npc = new LocalNpcSim(`${OWNER}:npc:1`, 0, 'wisp');
+    placeClear(npc);
     const attack = npc.update(1 / 60, READY_AT, [
       { id: PLAYER, pos: { x: npc.pos.x + 2, y: npc.pos.y } },
     ]);
@@ -47,6 +56,7 @@ describe('NPC aggro', () => {
     npc.takeHit(999, 1_000);
     npc.update(1 / 60, 1_000 + 6_001, []); // 再出現
     expect(npc.alive).toBe(true);
+    placeClear(npc);
     // 再出現直後 (spawn 演出 + 初撃ディレイ後) は拠点優先に戻っている
     const attack = npc.update(1 / 60, 1_000 + 6_001 + 5_000, makeTargets(npc));
     expect(attack?.targetId).toBe(BASE_ID);

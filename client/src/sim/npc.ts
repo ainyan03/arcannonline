@@ -12,6 +12,7 @@ import {
 import { mulberry32 } from './danmaku/rng';
 import {
   isBlocked,
+  lineOfFireBlocked,
   resolveObstacles,
   steerAroundObstacles,
 } from '../../../shared/src/obstacles';
@@ -315,6 +316,9 @@ export class LocalNpcSim {
     }
 
     if (nearest && nearestDist <= params.attackRange && now >= this.nextAttackAt) {
+      // 岩越しの無駄撃ち抑制: 弾は岩で消えるため、射線が通るまで撃たずに待つ
+      // (クールダウンは消費せず、移動で射線が通り次第すぐ撃てる)
+      if (lineOfFireBlocked(this.pos, nearest.pos)) return null;
       this.nextAttackAt =
         now +
         (params.attackBaseMs + this.random() * params.attackJitterMs) / aggression;

@@ -3,6 +3,7 @@ import {
   BASE_COLLIDER_RADIUS,
   OBSTACLES,
   isBlocked,
+  lineOfFireBlocked,
   resolveObstacles,
   steerAroundObstacles,
 } from '../shared/src/obstacles';
@@ -105,6 +106,44 @@ describe('steerAroundObstacles', () => {
     }
     const d = Math.hypot(npc.pos.x - target.pos.x, npc.pos.y - target.pos.y);
     expect(d).toBeLessThan(15);
+  });
+});
+
+describe('lineOfFireBlocked', () => {
+  const rock = OBSTACLES[8]; // (52, 8, r=3)
+
+  it('detects a rock crossing the segment and ignores clear or behind rocks', () => {
+    // 岩を貫く射線
+    expect(
+      lineOfFireBlocked({ x: rock.x - 10, y: rock.y }, { x: rock.x + 10, y: rock.y }),
+    ).toBe(true);
+    // 岩の横を通る射線
+    expect(
+      lineOfFireBlocked(
+        { x: rock.x - 10, y: rock.y + 8 },
+        { x: rock.x + 10, y: rock.y + 8 },
+      ),
+    ).toBe(false);
+    // 岩は線分の延長上 (目標より奥) → 遮らない
+    expect(
+      lineOfFireBlocked({ x: rock.x - 20, y: rock.y }, { x: rock.x - 8, y: rock.y }),
+    ).toBe(false);
+  });
+
+  it('npc holds fire while the target is behind a rock', () => {
+    const npc = new LocalNpcSim('c'.repeat(64) + ':npc:2', 0);
+    npc.pos.x = rock.x - 8;
+    npc.pos.y = rock.y;
+    // 岩の反対側 (attackRange 内) の目標へは撃たない
+    const blocked = npc.update(1 / 60, 5_000, [
+      { id: 't', pos: { x: rock.x + 8, y: rock.y } },
+    ]);
+    expect(blocked).toBeNull();
+    // 射線が通る目標へはすぐ撃てる (クールダウン未消費)
+    const clear = npc.update(1 / 60, 5_100, [
+      { id: 't', pos: { x: rock.x - 8, y: rock.y - 15 } },
+    ]);
+    expect(clear?.targetId).toBe('t');
   });
 });
 
