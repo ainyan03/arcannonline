@@ -10,11 +10,16 @@ const BULLET_Y = 0.9;
 const ENEMY_HALO_SCALE = 2.8;
 const ALLY_HALO_SCALE = 2.0;
 
+/** 敵弾コアの明滅周期 (rad/ms)。0.025 ≒ 4Hz。全敵弾が同位相で点滅する */
+const ENEMY_PULSE_OMEGA = 0.025;
+
 /**
  * 弾の一括描画。InstancedMesh 1枚 + インスタンスカラーで全弾を描く。
  * 協力プレイの視認性のため、敵 (NPC) の弾は所有者色でなく全プレイヤー共通の
- * 警告色 + 大きめのハローで描き、味方の弾は所有者のアバター色と連動させる
- * (自弾は白寄りの明色)。避けるべき弾が一目で分かるようにする
+ * 警告色 + 大きめのハローで描き、さらに中心コアを白熱⇔警告色で明滅させる
+ * (全敵弾が同位相で点滅し「避けるべき弾」のシグナルとして機能する)。
+ * 味方の弾は所有者のアバター色と連動させ、常時安定した発色にする
+ * (自弾は白寄りの明色)
  */
 export class BulletView {
   private readonly mesh: THREE.InstancedMesh;
@@ -26,6 +31,7 @@ export class BulletView {
   private readonly scale = new THREE.Vector3();
   private readonly ownColor = new THREE.Color(0xfff2b0);
   private readonly enemyColor = new THREE.Color(0xff4d6d);
+  private readonly enemyCoreColor = new THREE.Color();
   private readonly white = new THREE.Color(0xffffff);
   private readonly colorCache = new Map<string, THREE.Color>();
 
@@ -81,17 +87,24 @@ export class BulletView {
   }
 
   sync(bullets: readonly Bullet[], selfId: string): void {
+    // 敵弾コアの明滅 (白熱⇔警告色)。コアの大きさもわずかに脈動させ、
+    // 色の判別が難しい場合でも動きで敵弾と分かるようにする
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() * ENEMY_PULSE_OMEGA);
+    this.enemyCoreColor.copy(this.enemyColor).lerp(this.white, pulse * 0.9);
+    const enemyCoreScale = 1 + 0.15 * pulse;
+
     let i = 0;
     for (const b of bullets) {
       if (!b.alive) continue;
+      const isEnemy = isNpcId(b.owner);
       const color = this.colorFor(b.owner, selfId);
       this.pos.set(b.x, BULLET_Y, b.y);
-      this.scale.setScalar(b.radius);
+      this.scale.setScalar(b.radius * (isEnemy ? enemyCoreScale : 1));
       this.mat.compose(this.pos, this.quat, this.scale);
       this.mesh.setMatrixAt(i, this.mat);
-      this.mesh.setColorAt(i, color);
+      this.mesh.setColorAt(i, isEnemy ? this.enemyCoreColor : color);
       this.scale.setScalar(
-        b.radius * (isNpcId(b.owner) ? ENEMY_HALO_SCALE : ALLY_HALO_SCALE),
+        b.radius * (isEnemy ? ENEMY_HALO_SCALE : ALLY_HALO_SCALE),
       );
       this.mat.compose(this.pos, this.quat, this.scale);
       this.halo.setMatrixAt(i, this.mat);
