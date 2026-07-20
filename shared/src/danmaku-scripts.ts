@@ -33,6 +33,33 @@ export const NORMAL_SHOT_SCRIPT_SOURCE = `
 fire(dir + rand(0 - 10, 10), rand(22, 30), 8, 0.2, 1.6);
 `;
 
+/**
+ * クラス別の通常ショット。各クラスに「静止・低速時 (steady)」と
+ * 「高速移動時 (moving = バラつき増)」の2段がある。
+ * 接近時の実効DPSはどのクラスもおおむね 75〜85 に揃え、射程・精度・
+ * テンポで差別化する (ウィスプ HP 24 が目安)
+ */
+export const CLASS_SHOT_SCRIPTS: Record<string, string> = {
+  // 星: 基準。素直な連射
+  'shot-star-steady': `fire(dir + rand(0 - 8, 8), rand(22, 30), 8, 0.2, 1.6);`,
+  'shot-star-moving': `fire(dir + rand(0 - 14, 14), rand(22, 30), 8, 0.2, 1.6);`,
+  // 箒: 高連射・軽量弾。移動速度が乗るぶん体感の弾道は荒れる
+  'shot-broom-steady': `fire(dir + rand(0 - 12, 12), rand(24, 32), 6, 0.2, 1.4);`,
+  'shot-broom-moving': `fire(dir + rand(0 - 20, 20), rand(24, 32), 6, 0.2, 1.4);`,
+  // 月: 低速連射の重い狙撃弾。静止でレーザーのように収束する
+  'shot-moon-steady': `fire(dir + rand(0 - 2, 2), rand(34, 38), 20, 0.24, 1.9);`,
+  'shot-moon-moving': `fire(dir + rand(0 - 13, 13), rand(34, 38), 20, 0.24, 1.9);`,
+  // 花: 短射程・広拡散のショットガン
+  'shot-flower-steady': `loop (3) { fire(dir + rand(0 - 22, 22), rand(18, 26), 6, 0.2, 0.9); }`,
+  'shot-flower-moving': `loop (3) { fire(dir + rand(0 - 30, 30), rand(18, 26), 6, 0.2, 0.9); }`,
+};
+
+/** 通常ショット系の ID → ソース (受信側の再生用。旧 normal-shot も含む) */
+export const PLAYER_SHOT_SOURCES: Record<string, string> = {
+  [NORMAL_SHOT_SCRIPT_ID]: NORMAL_SHOT_SCRIPT_SOURCE,
+  ...CLASS_SHOT_SCRIPTS,
+};
+
 // 同梱スクリプトは「強攻撃」— エネルギーを消費する代わりに敵 (HP 24) を
 // 一撃〜数発で倒せる火力を持つ。高威力ぶん残存時間を短くして射程を
 // 近〜中距離 (約16〜29) に絞り、遠方への安全な狙撃はできないようにする。

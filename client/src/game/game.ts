@@ -4,10 +4,13 @@
 import * as THREE from 'three';
 import {
   DANMAKU_SCRIPTS,
-  NORMAL_SHOT_SCRIPT_ID,
-  NORMAL_SHOT_SCRIPT_SOURCE,
+  PLAYER_SHOT_SOURCES,
   bombScriptIdFor,
 } from '../../../shared/src/danmaku-scripts';
+import {
+  classShotFor,
+  shotScriptIdFor,
+} from '../../../shared/src/player-classes';
 import {
   BOSS_SCRIPT_IDS,
   NPC_FIRE_SCRIPT_ID,
@@ -16,7 +19,6 @@ import {
   NPC_TURRET_SCRIPT_ID,
 } from '../../../shared/src/npc-scripts';
 import {
-  AUTO_SHOT_COOLDOWN_MS,
   AUTO_SHOT_RANGE,
   BASE_HIT_RADIUS,
   BASE_ID,
@@ -117,6 +119,9 @@ const STALE_REMOTE_MS = 10_000;
  */
 const AFK_TIMEOUT_MS = 300_000;
 
+/** ボム発動時の無敵時間 (発動硬直を守る) */
+const BOMB_INVULN_MS = 800;
+
 /**
  * タッチの移動入力を確定するまでの猶予。2本指操作は着地タイミングが
  * わずかにずれるため、1本目に即反応すると意図しない移動が発生する
@@ -206,6 +211,8 @@ export class Game {
   private lastTickTime = performance.now();
   private lastNpcUpdate = performance.now();
   private lastNpcSentAt = 0;
+  /** クラス (見た目プリセットの番号)。ボム・通常ショット・移動特性を決める */
+  private readonly classStyle: number | undefined;
   /** クラス (見た目プリセット) で固定されるボムのスクリプトID */
   private readonly bombScriptId: string;
   private lastFireAt = 0;
@@ -282,7 +289,8 @@ export class Game {
     this.player = new LocalPlayerSim(spawn, name, appearance);
     this.playerView = new PlayerView(name, appearance);
     // 強攻撃はクラス (見た目プリセット) 固定のボム。選択UIは持たない
-    this.bombScriptId = bombScriptIdFor(appearance?.s);
+    this.classStyle = appearance?.s;
+    this.bombScriptId = bombScriptIdFor(this.classStyle);
     this.playerView.sync(spawn.x, spawn.y, 0);
     this.world.scene.add(this.playerView.object);
     // 初回フレーム前でもレイキャスト等が正しく動くようカメラを初期化する
@@ -1249,6 +1257,12 @@ export class Game {
     if (cost === null || !this.player.trySpendEnergy(cost)) return;
 
     this.lastFireAt = now;
+    // ボム発動の短い無敵 (STG のボムの位置付け。被弾判定は自己申告なので
+    // ローカルで完結する)。リスポーン無敵が残っていれば長い方を保つ
+    this.player.invulnUntil = Math.max(
+      this.player.invulnUntil,
+      now + BOMB_INVULN_MS,
+    );
     const ev: FireEvent = {
       id: crypto.randomUUID(),
       script: this.bombScriptId,
@@ -1290,16 +1304,22 @@ export class Game {
    * ゲートは通さない (強攻撃の展開中でも通常ショットは撃てる)
    */
   private autoFire(now: number): void {
-    if (now - this.lastAutoFireAt < AUTO_SHOT_COOLDOWN_MS) return;
+    // クールダウンと弾道はクラス別。高速移動中はバラつきの大きい弾道になる
+    const shot = classShotFor(this.classStyle);
+    if (now - this.lastAutoFireAt < shot.cooldownMs) return;
     if (!this.nearestEnemyAhead(AUTO_SHOT_RANGE)) return;
     this.lastAutoFireAt = now;
 
     const origin = { x: this.player.pos.x, y: this.player.pos.y };
     const sourceVelocity = this.player.getVelocity();
+    const scriptId = shotScriptIdFor(
+      this.classStyle,
+      Math.hypot(sourceVelocity.x, sourceVelocity.y),
+    );
     const seed = (Math.random() * 0x100000000) >>> 0;
     const ev: FireEvent = {
       id: crypto.randomUUID(),
-      script: NORMAL_SHOT_SCRIPT_ID,
+      script: scriptId,
       seed,
       x: origin.x,
       y: origin.y,
@@ -1310,7 +1330,7 @@ export class Game {
     };
     this.seenFireIds.add(ev.id);
     this.engine.startScript(
-      NORMAL_SHOT_SCRIPT_SOURCE,
+      PLAYER_SHOT_SOURCES[scriptId],
       ev.seed,
       () => origin,
       ev.dir,
@@ -1368,7 +1388,8 @@ export class Game {
     const source =
       DANMAKU_SCRIPTS[ev.script]?.source ??
       NPC_SCRIPT_SOURCES[ev.script] ??
-      (ev.script === NORMAL_SHOT_SCRIPT_ID ? NORMAL_SHOT_SCRIPT_SOURCE : null);
+      PLAYER_SHOT_SOURCES[ev.script] ??
+      null;
     if (!source) return;
     // 伝送遅延ぶんを追いつき再生して、発射側との弾位置のずれを抑える。
     // ev.at は相手の時計なので、位置同期から推定した時計ずれを差し引いて

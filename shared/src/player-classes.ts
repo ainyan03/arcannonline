@@ -34,3 +34,59 @@ export function classMovementFor(styleIndex: number | undefined): ClassMovement 
 /** クラス補正込みの最高移動速度。発射イベント等の速度検証の上限に使う */
 export const PLAYER_SPEED_MAX =
   PLAYER_SPEED * Math.max(...CLASS_MOVEMENTS.map((c) => c.speedMul));
+
+export interface ClassShot {
+  /** 通常ショットのクールダウン (ms) */
+  cooldownMs: number;
+  /** 静止・低速時のスクリプトID */
+  steadyScriptId: string;
+  /** 高速移動時のスクリプトID (バラつき増) */
+  movingScriptId: string;
+}
+
+/** 見た目プリセット順の通常ショット特性 */
+export const CLASS_SHOTS: readonly ClassShot[] = [
+  // 星: 基準の連射
+  {
+    cooldownMs: 100,
+    steadyScriptId: 'shot-star-steady',
+    movingScriptId: 'shot-star-moving',
+  },
+  // 箒: さらに高い連射 (弾は軽い)
+  {
+    cooldownMs: 80,
+    steadyScriptId: 'shot-broom-steady',
+    movingScriptId: 'shot-broom-moving',
+  },
+  // 月: 低速連射の狙撃弾
+  {
+    cooldownMs: 250,
+    steadyScriptId: 'shot-moon-steady',
+    movingScriptId: 'shot-moon-moving',
+  },
+  // 花: ショットガン
+  {
+    cooldownMs: 220,
+    steadyScriptId: 'shot-flower-steady',
+    movingScriptId: 'shot-flower-moving',
+  },
+];
+
+export function classShotFor(styleIndex: number | undefined): ClassShot {
+  return CLASS_SHOTS[styleIndex ?? 0] ?? CLASS_SHOTS[0];
+}
+
+/** 最高速度に対するこの割合を超える移動中は、バラつきの大きい弾道になる */
+export const MOVING_SHOT_SPEED_RATIO = 0.55;
+
+/** 現在速度に応じた通常ショットのスクリプトID (移動中はバラつき増) */
+export function shotScriptIdFor(
+  styleIndex: number | undefined,
+  speed: number,
+): string {
+  const shot = classShotFor(styleIndex);
+  const maxSpeed = PLAYER_SPEED * classMovementFor(styleIndex).speedMul;
+  return speed > maxSpeed * MOVING_SHOT_SPEED_RATIO
+    ? shot.movingScriptId
+    : shot.steadyScriptId;
+}

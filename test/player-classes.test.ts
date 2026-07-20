@@ -3,9 +3,13 @@ import { LocalPlayerSim } from '../client/src/sim/local-player';
 import { PLAYER_SPEED, type Appearance } from '../shared/src/protocol';
 import {
   CLASS_MOVEMENTS,
+  CLASS_SHOTS,
   PLAYER_SPEED_MAX,
   classMovementFor,
+  shotScriptIdFor,
 } from '../shared/src/player-classes';
+import { PLAYER_SHOT_SOURCES } from '../shared/src/danmaku-scripts';
+import { BulletEngine } from '../client/src/sim/danmaku/engine';
 
 const appearance = (s: number): Appearance => ({ s, c: '#8877cc', a: 0 });
 /** 岩のない空き地 (障害物の影響を受けずに移動特性だけを測る) */
@@ -48,6 +52,30 @@ describe('player classes', () => {
     // 目標を通過してさらに先へ進んでいる (到着減速で停止しない)
     expect(broom.pos.x).toBeGreaterThan(targetX + 2);
     expect(speedOf(broom)).toBeGreaterThan(0);
+  });
+
+  it('maps every class shot to replayable scripts within the VM budgets', () => {
+    const engine = new BulletEngine();
+    expect(CLASS_SHOTS).toHaveLength(4);
+    for (const shot of CLASS_SHOTS) {
+      expect(shot.cooldownMs).toBeGreaterThan(0);
+      for (const id of [shot.steadyScriptId, shot.movingScriptId]) {
+        const source = PLAYER_SHOT_SOURCES[id];
+        expect(source).toBeTruthy();
+        expect(
+          engine.estimateCost(source, 1, 0, () => ({ x: 0, y: 0 })),
+        ).not.toBeNull();
+      }
+    }
+  });
+
+  it('switches to the wilder ballistics only while moving fast', () => {
+    // 月: 静止で収束、走ると乱れる
+    expect(shotScriptIdFor(2, 0)).toBe('shot-moon-steady');
+    expect(shotScriptIdFor(2, PLAYER_SPEED * 0.9)).toBe('shot-moon-moving');
+    // 箒: 巡航 (0.6×基準) は steady、加速中は moving
+    expect(shotScriptIdFor(1, PLAYER_SPEED * 0.6)).toBe('shot-broom-steady');
+    expect(shotScriptIdFor(1, PLAYER_SPEED * 1.2)).toBe('shot-broom-moving');
   });
 
   it('the moon mage is slower than base and the star witch can stop', () => {
