@@ -767,11 +767,21 @@ export class Game {
       aggression: waveAggression(wave.tier),
       kinds: WAVE_COMPOSITION[wave.tier],
     };
-    // 拠点防衛ループ: 敵はプレイヤーではなく中央の魔力灯を主目標にする。
-    // 消灯中の魔力灯は狙わない (再点火までの回復時間を作る)
+    // 拠点防衛ループ: 点灯中は魔力灯が主目標 (消灯中は狙わない)。
+    // プレイヤーは常に標的候補に含める: 点灯中は被弾アグロ (反撃) の対象、
+    // 消灯中は主目標としてプレイヤーを襲う
     const targets: NpcTarget[] = this.baseDefense.lit()
       ? [{ id: BASE_ID, pos: { x: 0, y: 0 } }]
       : [];
+    targets.push({
+      id: this.room.selfId,
+      pos: { x: this.player.pos.x, y: this.player.pos.y },
+    });
+    for (const [id, remote] of this.remotes) {
+      if (remote.sim.hasPos) {
+        targets.push({ id, pos: { x: remote.sim.lastX, y: remote.sim.lastY } });
+      }
+    }
     for (const npc of this.localNpcs) {
       const attack = npc.sim.update(dt, now, targets, waveMod);
       if (attack) this.fireNpc(npc.sim, attack);
@@ -934,6 +944,8 @@ export class Game {
           const rr = bullet.radius + npc.sim.hitRadius;
           if (dx * dx + dy * dy > rr * rr) return;
           const died = npc.sim.takeHit(bullet.dur, now);
+          // 反撃: 生き残ったら撃ってきたプレイヤーをしばらく狙う
+          if (!died) npc.sim.provoke(bullet.owner, now);
           this.engine.killAt(index);
           this.room.broadcastBulletKill(bullet.fireId, bullet.spawnIdx);
           this.audio.playHit();

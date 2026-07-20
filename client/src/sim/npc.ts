@@ -1,4 +1,5 @@
 import {
+  BASE_ID,
   FIELD_SIZE,
   NPC_KINDS,
   NPC_MAX_HP,
@@ -18,6 +19,8 @@ import {
 const NPC_BOUND = FIELD_SIZE / 2 - 4;
 /** 障害物との衝突に使う敵の体半径 */
 const NPC_BODY_RADIUS = 0.7;
+/** 被弾で攻撃者を狙い続ける時間 (被弾のたびに延長される) */
+const AGGRO_MS = 6_000;
 
 /** 種別ごとの AI パラメータ (担当ピアのみ使用。HP 上限は NPC_KINDS が正本) */
 const KIND_PARAMS: Record<
@@ -139,6 +142,8 @@ export class LocalNpcSim {
   private respawnAt = 0;
   private spawnUntil = 0;
   private nextAttackAt = 0;
+  private aggroId: string | null = null;
+  private aggroUntil = 0;
   /** NPC ID 末尾のスロット番号 (ウェーブ編成の引き当てに使う) */
   private readonly slot: number;
 
@@ -181,14 +186,36 @@ export class LocalNpcSim {
       return null;
     }
 
+    // 標的の優先度: 被弾アグロ > 魔力灯 > 最寄り (消灯中のプレイヤー等)。
+    // 点灯中は魔力灯へ直行しつつ、撃たれたら攻撃者へ矛先を変える
     let nearest: NpcTarget | null = null;
     let nearestDist = Infinity;
+    let primary: NpcTarget | null = null;
+    let primaryDist = Infinity;
+    let aggro: NpcTarget | null = null;
+    let aggroDist = Infinity;
+    const aggroActive = this.aggroId !== null && now < this.aggroUntil;
     for (const target of targets) {
       const d = Math.hypot(target.pos.x - this.pos.x, target.pos.y - this.pos.y);
+      if (aggroActive && target.id === this.aggroId) {
+        aggro = target;
+        aggroDist = d;
+      }
+      if (target.id === BASE_ID) {
+        primary = target;
+        primaryDist = d;
+      }
       if (d < nearestDist) {
         nearest = target;
         nearestDist = d;
       }
+    }
+    if (aggro) {
+      nearest = aggro;
+      nearestDist = aggroDist;
+    } else if (primary) {
+      nearest = primary;
+      nearestDist = primaryDist;
     }
 
     const params = KIND_PARAMS[this.kind];
@@ -285,6 +312,12 @@ export class LocalNpcSim {
     return true;
   }
 
+  /** 被弾の反撃: しばらく攻撃者を優先して狙う (被弾のたびに延長) */
+  provoke(attackerId: string, now: number): void {
+    this.aggroId = attackerId;
+    this.aggroUntil = now + AGGRO_MS;
+  }
+
   makeState(): NpcStatePayload {
     return {
       id: this.id,
@@ -325,6 +358,8 @@ export class LocalNpcSim {
     this.vel.y = 0;
     this.hp = NPC_KINDS[this.kind].maxHp;
     this.mode = 'spawn';
+    this.aggroId = null;
+    this.aggroUntil = 0;
     this.spawnUntil = now + 900;
     this.nextAttackAt = now + 1_800 + this.random() * 1_200;
     this.pickWaypoint();
