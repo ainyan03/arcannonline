@@ -13,7 +13,13 @@ const NPC_BOUND = FIELD_SIZE / 2 - 4;
 const CHASE_RANGE = 80;
 const ATTACK_RANGE = 27;
 const DESIRED_RANGE = 11;
-const INTERP_DELAY_MS = 140;
+/**
+ * スナップショットの遅延再生量。送信間隔 (NPC_STATE_INTERVAL_MS=200ms) より
+ * 長くしないと補間の挟み込みが成立せず、200ms ごとのステップ移動になる
+ */
+const INTERP_DELAY_MS = 280;
+/** 未来側スナップショット未着時に速度で外挿する上限 */
+const EXTRAPOLATE_MAX_MS = 200;
 
 export const NPC_HIT_RADIUS = 0.72;
 
@@ -199,6 +205,8 @@ interface NpcSnapshot {
   x: number;
   y: number;
   h: number;
+  vx: number;
+  vy: number;
 }
 
 export interface RemoteNpcSample {
@@ -236,7 +244,14 @@ export class RemoteNpcSim {
     this.mode = state.mode;
     this.lastX = state.x;
     this.lastY = state.y;
-    this.buf.push({ t: now, x: state.x, y: state.y, h: state.h });
+    this.buf.push({
+      t: now,
+      x: state.x,
+      y: state.y,
+      h: state.h,
+      vx: state.vx,
+      vy: state.vy,
+    });
     if (this.buf.length > 20) this.buf.shift();
   }
 
@@ -251,15 +266,29 @@ export class RemoteNpcSim {
     const a = this.buf[0];
     out.visible = this.mode !== 'dead';
     if (this.buf.length === 1) {
-      out.x = a.x;
-      out.y = a.y;
+      // 未来側のスナップショットが届くまでは速度で短時間だけ外挿し、
+      // 5Hz の受信間隔でも停止して見えないようにする
+      const dt =
+        Math.min(Math.max(renderTime - a.t, 0), EXTRAPOLATE_MAX_MS) / 1000;
+      out.x = a.x + a.vx * dt;
+      out.y = a.y + a.vy * dt;
       out.h = a.h;
       return out;
     }
     const b = this.buf[1];
-    const k = Math.min(Math.max((renderTime - a.t) / Math.max(b.t - a.t, 1), 0), 1);
-    out.x = a.x + (b.x - a.x) * k;
-    out.y = a.y + (b.y - a.y) * k;
+    const span = Math.max(b.t - a.t, 1);
+    const k = Math.min(Math.max((renderTime - a.t) / span, 0), 1);
+    // Hermite 補間: スナップショットの速度も拘束に使い、5Hz でも旋回や
+    // 加減速が曲線として滑らかに再現されるようにする
+    const s = span / 1000;
+    const k2 = k * k;
+    const k3 = k2 * k;
+    const h00 = 2 * k3 - 3 * k2 + 1;
+    const h10 = k3 - 2 * k2 + k;
+    const h01 = -2 * k3 + 3 * k2;
+    const h11 = k3 - k2;
+    out.x = h00 * a.x + h10 * s * a.vx + h01 * b.x + h11 * s * b.vx;
+    out.y = h00 * a.y + h10 * s * a.vy + h01 * b.y + h11 * s * b.vy;
     let dh = b.h - a.h;
     while (dh > Math.PI) dh -= Math.PI * 2;
     while (dh < -Math.PI) dh += Math.PI * 2;

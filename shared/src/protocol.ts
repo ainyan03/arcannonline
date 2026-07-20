@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 2;
+export const PROTO_VERSION = 3;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -160,8 +160,8 @@ export const INVULN_MS = 2_000;
 
 // --- 分散NPC ---------------------------------------------------------------
 
-/** 各クライアントが担当する小型敵の数 */
-export const NPCS_PER_PEER = 2;
+/** 各クライアントが担当する小型敵の数 (NPC ID 形式の上限は :npc:[0-3] の4体) */
+export const NPCS_PER_PEER = 4;
 /** NPC状態の送信間隔 (5Hz) */
 export const NPC_STATE_INTERVAL_MS = 200;
 export const NPC_MAX_HP = 24;

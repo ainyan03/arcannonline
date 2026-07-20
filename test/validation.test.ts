@@ -74,7 +74,8 @@ describe('protocol validation', () => {
     };
     expect(parseRealtimeMessage({ type: 'npcs', states: [npc] }))
       .toMatchObject({ type: 'npcs', states: [{ id: npc.id, mode: 'chase' }] });
-    expect(parseRealtimeMessage({ type: 'npcs', states: [npc, npc, npc] }))
+    // 上限 (NPCS_PER_PEER = 4) を超えるバッチは拒否する
+    expect(parseRealtimeMessage({ type: 'npcs', states: [npc, npc, npc, npc, npc] }))
       .toBeNull();
     expect(parseRealtimeMessage({
       type: 'npcs', states: [{ ...npc, id: 'invalid:npc:0' }],
