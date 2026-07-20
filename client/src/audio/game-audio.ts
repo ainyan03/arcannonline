@@ -80,13 +80,17 @@ export class GameAudio {
     this.tone(170 + size * 90, ctx.currentTime, 0.07, gain * 0.75, 'triangle', 90);
   }
 
+  /** プレイヤー参加。上昇アルペジオ+和音で戦闘音に埋もれない華やかさにする */
   playJoin(): void {
     if (!this.canPlay('join', 180)) return;
     const ctx = this.ready();
     if (!ctx) return;
     const at = ctx.currentTime;
-    this.tone(523.25, at, 0.12, 0.12, 'sine', 659.25);
-    this.tone(783.99, at + 0.11, 0.17, 0.1, 'sine', 1046.5);
+    this.tone(523.25, at, 0.14, 0.16, 'sine', 587.33);
+    this.tone(659.25, at + 0.1, 0.14, 0.16, 'sine', 698.46);
+    this.tone(783.99, at + 0.2, 0.16, 0.17, 'sine', 830.61);
+    this.tone(1046.5, at + 0.3, 0.32, 0.18, 'sine');
+    this.tone(1318.5, at + 0.3, 0.32, 0.09, 'sine');
   }
 
   playLeave(): void {
@@ -98,13 +102,15 @@ export class GameAudio {
     this.tone(392, at + 0.1, 0.2, 0.075, 'sine', 293.66);
   }
 
+  /** チャット着信。高めの2音チャイム+倍音で戦闘音より前に抜けるようにする */
   playChat(): void {
     if (!this.canPlay('chat', 120)) return;
     const ctx = this.ready();
     if (!ctx) return;
     const at = ctx.currentTime;
-    this.tone(880, at, 0.09, 0.09, 'sine', 990);
-    this.tone(1320, at + 0.065, 0.12, 0.065, 'sine', 1174.66);
+    this.tone(987.77, at, 0.12, 0.16, 'sine');
+    this.tone(1318.5, at + 0.09, 0.24, 0.16, 'sine');
+    this.tone(1975.53, at + 0.09, 0.18, 0.05, 'sine');
   }
 
   /** 通常ショット (自動発射)。連続で鳴り続けるため強攻撃より短く控えめにする */

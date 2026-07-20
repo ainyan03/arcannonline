@@ -69,9 +69,16 @@
         pointer-events: none;
       }
       .chat-log {
-        width: min(360px, 70vw);
+        width: fit-content;
+        max-width: min(360px, 70vw);
         word-break: break-all;
         margin-bottom: 6px;
+      }
+      /* メッセージがある間だけ、背後のフィールドを暗くして文字を読みやすくする */
+      .chat-log:not(:empty) {
+        background: rgba(0, 8, 20, 0.55);
+        border-radius: 8px;
+        padding: 6px 10px;
       }
       .chat-log .name {
         color: #ffd24d;
