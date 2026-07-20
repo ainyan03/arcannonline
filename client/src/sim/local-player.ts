@@ -10,8 +10,11 @@ import {
   type StatePayload,
   type Vec2,
 } from '../../../shared/src/protocol';
+import { isBlocked, resolveObstacles } from '../../../shared/src/obstacles';
 
 const BOUND = FIELD_SIZE / 2 - 1;
+/** 障害物との衝突に使う自機の体半径 */
+const BODY_RADIUS = 0.5;
 
 /** 速度が目標速度へ追従する速さ (1/s)。小さいほど慣性が強く柔らかい動き */
 const ACCEL_RATE = 8;
@@ -124,6 +127,14 @@ export class LocalPlayerSim {
     }
     this.pos.x = clamp(this.pos.x + this.vel.x * dt, -BOUND, BOUND);
     this.pos.y = clamp(this.pos.y + this.vel.y * dt, -BOUND, BOUND);
+    if (
+      resolveObstacles(this.pos, BODY_RADIUS) &&
+      this.target &&
+      isBlocked(this.target.x, this.target.y, BODY_RADIUS)
+    ) {
+      // 目標地点が障害物の中: 押し付け続けても到達しないため自動移動を解除
+      this.target = null;
+    }
     // 向きは実際の速度ベクトルから求める (旋回も滑らかになる)
     if (speed > 0.5) {
       this.heading = Math.atan2(this.vel.y, this.vel.x);

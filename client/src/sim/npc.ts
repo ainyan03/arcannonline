@@ -9,8 +9,11 @@ import {
   type Vec2,
 } from '../../../shared/src/protocol';
 import { mulberry32 } from './danmaku/rng';
+import { isBlocked, resolveObstacles } from '../../../shared/src/obstacles';
 
 const NPC_BOUND = FIELD_SIZE / 2 - 4;
+/** 障害物との衝突に使う敵の体半径 */
+const NPC_BODY_RADIUS = 0.7;
 
 /** 種別ごとの AI パラメータ (担当ピアのみ使用。HP 上限は NPC_KINDS が正本) */
 const KIND_PARAMS: Record<
@@ -41,10 +44,11 @@ const KIND_PARAMS: Record<
     hitRadius: 1.2,
   },
   // 突進型: 高速で肉薄し、attackRange まで近づくと自爆して弾リングを撒く
+  // (attackRange は魔力灯コライダー + 双方の体半径ぶん外から届く値にする)
   rusher: {
     speed: 6.6,
     chaseRange: 110,
-    attackRange: 2.6,
+    attackRange: 4.2,
     desiredRange: 0,
     attackBaseMs: 0,
     attackJitterMs: 0,
@@ -236,6 +240,7 @@ export class LocalNpcSim {
     this.vel.y += (dy * desiredSpeed - this.vel.y) * k;
     this.pos.x = clamp(this.pos.x + this.vel.x * dt);
     this.pos.y = clamp(this.pos.y + this.vel.y * dt);
+    resolveObstacles(this.pos, NPC_BODY_RADIUS);
     if (Math.hypot(this.vel.x, this.vel.y) > 0.1) {
       this.heading = Math.atan2(this.vel.y, this.vel.x);
     }
@@ -291,10 +296,15 @@ export class LocalNpcSim {
 
   private spawn(now: number, kind?: NpcKind): void {
     if (kind) this.kind = kind;
-    const angle = this.random() * Math.PI * 2;
-    const radius = 14 + this.random() * 20;
-    this.pos.x = Math.cos(angle) * radius;
-    this.pos.y = Math.sin(angle) * radius;
+    // 障害物の中に湧かないよう数回引き直す (担当ピアのローカル判断なので
+    // リトライ回数が端末間で揃う必要はない)
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const angle = this.random() * Math.PI * 2;
+      const radius = 14 + this.random() * 20;
+      this.pos.x = Math.cos(angle) * radius;
+      this.pos.y = Math.sin(angle) * radius;
+      if (!isBlocked(this.pos.x, this.pos.y, NPC_BODY_RADIUS)) break;
+    }
     this.vel.x = 0;
     this.vel.y = 0;
     this.hp = NPC_KINDS[this.kind].maxHp;
@@ -305,12 +315,16 @@ export class LocalNpcSim {
   }
 
   private pickWaypoint(): void {
-    const angle = this.random() * Math.PI * 2;
-    const radius = 12 + this.random() * 72;
-    this.waypoint = {
-      x: clamp(Math.cos(angle) * radius),
-      y: clamp(Math.sin(angle) * radius),
-    };
+    // 障害物の中を目的地にすると壁へ押し付け続けて動けなくなるため引き直す
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const angle = this.random() * Math.PI * 2;
+      const radius = 12 + this.random() * 72;
+      this.waypoint = {
+        x: clamp(Math.cos(angle) * radius),
+        y: clamp(Math.sin(angle) * radius),
+      };
+      if (!isBlocked(this.waypoint.x, this.waypoint.y, NPC_BODY_RADIUS)) return;
+    }
   }
 }
 

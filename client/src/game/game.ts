@@ -38,6 +38,7 @@ import {
   type Vec2,
 } from '../../../shared/src/protocol';
 import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
+import { isBlocked, OBSTACLES } from '../../../shared/src/obstacles';
 import { currentAccount, onAccountChange } from '../auth/github';
 import { RemoteProfiles } from '../auth/remote-profiles';
 import type { VerifiedProfile } from '../auth/verify-token';
@@ -77,11 +78,22 @@ import { EnemyView } from '../view3d/enemy-view';
 import { Particles } from '../view3d/particles';
 import { PlayerView } from '../view3d/player-view';
 import { BaseView } from '../view3d/base-view';
+import { createObstacles } from '../view3d/obstacle-view';
 import { createWorld, type World } from '../view3d/world';
 import { cameraRelativeDir, Keyboard } from './input';
 import { BulletSync } from './bullet-sync';
 
 const SPAWN_RANGE = 30;
+
+/** 障害物 (魔力灯コライダー含む) と重ならないスポーン地点を選ぶ */
+function pickSpawnPoint(): Vec2 {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const x = (Math.random() * 2 - 1) * SPAWN_RANGE;
+    const y = (Math.random() * 2 - 1) * SPAWN_RANGE;
+    if (!isBlocked(x, y, 1)) return { x, y };
+  }
+  return { x: SPAWN_RANGE, y: SPAWN_RANGE };
+}
 
 /** この時間 state を受信しないリモートはゴーストとみなして除去する */
 const STALE_REMOTE_MS = 10_000;
@@ -210,6 +222,7 @@ export class Game {
     this.world = createWorld(container);
     this.baseView = new BaseView();
     this.world.scene.add(this.baseView.object);
+    this.world.scene.add(createObstacles());
     this.baseStatus = new BaseStatusUI(container);
     this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP);
     this.profiles = new RemoteProfiles((id, profile) => {
@@ -242,10 +255,7 @@ export class Game {
     };
     this.markers = new EdgeMarkers(container);
 
-    const spawn: Vec2 = {
-      x: (Math.random() * 2 - 1) * SPAWN_RANGE,
-      y: (Math.random() * 2 - 1) * SPAWN_RANGE,
-    };
+    const spawn = pickSpawnPoint();
     this.player = new LocalPlayerSim(spawn, name, appearance);
     this.playerView = new PlayerView(name, appearance);
     this.playerView.sync(spawn.x, spawn.y, 0);
@@ -527,6 +537,7 @@ export class Game {
       this.checkNpcHits(now);
       this.checkHits(now);
       this.checkBaseHits();
+      this.checkObstacleHits();
       this.updateHud();
     }, STATE_INTERVAL_MS));
 
@@ -640,6 +651,7 @@ export class Game {
     this.checkNpcHits(now);
     this.checkHits(now);
     this.checkBaseHits();
+    this.checkObstacleHits();
     this.updateBaseView(now);
 
     // 無敵時間中は点滅、被弾直後は発光フラッシュ
@@ -836,12 +848,19 @@ export class Game {
     );
   }
 
-  /** 担当NPCの弾だけを権威的に拠点へ命中させ、全ピアへ共有する。 */
+  /**
+   * 拠点に達した弾の処理。担当NPCの弾だけを権威的に命中させて全ピアへ
+   * 共有し、それ以外の弾 (プレイヤー弾・他ピア担当のNPC弾) は魔力灯が
+   * 実体化したためローカルで遮って消す (ダメージ確定は担当ピアの権威のまま)
+   */
   private checkBaseHits(): void {
     this.engine.forEachNearby(0, 0, BASE_HIT_RADIUS, (bullet, index) => {
-      if (!npcBelongsToPeer(bullet.owner, this.room.selfId)) return;
       const rr = bullet.radius + BASE_HIT_RADIUS;
       if (bullet.x * bullet.x + bullet.y * bullet.y > rr * rr) return;
+      if (!npcBelongsToPeer(bullet.owner, this.room.selfId)) {
+        this.engine.killAt(index);
+        return;
+      }
       const event: BaseHitEvent = {
         id: crypto.randomUUID(),
         npc: bullet.owner,
@@ -854,6 +873,22 @@ export class Game {
       this.room.broadcastBaseHit(event);
       this.showBaseHit();
     });
+  }
+
+  /**
+   * 岩に入った弾を消す。弾道は発射イベントから全クライアントが決定論的に
+   * 再現しているため、岩との衝突も各自ローカルに消すだけで一致する
+   * (同期メッセージ不要)。岩ごとに空間ハッシュを引くので tick 負荷も小さい
+   */
+  private checkObstacleHits(): void {
+    for (const o of OBSTACLES) {
+      this.engine.forEachNearby(o.x, o.y, o.r, (bullet, index) => {
+        const dx = bullet.x - o.x;
+        const dy = bullet.y - o.y;
+        if (dx * dx + dy * dy > o.r * o.r) return;
+        this.engine.killAt(index);
+      });
+    }
   }
 
   private showBaseHit(): void {
@@ -948,11 +983,8 @@ export class Game {
       const announce = `* ${this.name} は ${killer} に撃墜されました`;
       this.chat.addLine('', announce, true);
       this.room.broadcastChat(announce);
-      this.player.respawn(
-        (Math.random() * 2 - 1) * SPAWN_RANGE,
-        (Math.random() * 2 - 1) * SPAWN_RANGE,
-        now,
-      );
+      const spawn = pickSpawnPoint();
+      this.player.respawn(spawn.x, spawn.y, now);
       this.playerView.sync(this.player.pos.x, this.player.pos.y, this.player.heading);
       this.sendStateNow();
     }
