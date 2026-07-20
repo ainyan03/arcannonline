@@ -9,7 +9,11 @@ import {
   type Vec2,
 } from '../../../shared/src/protocol';
 import { mulberry32 } from './danmaku/rng';
-import { isBlocked, resolveObstacles } from '../../../shared/src/obstacles';
+import {
+  isBlocked,
+  resolveObstacles,
+  steerAroundObstacles,
+} from '../../../shared/src/obstacles';
 
 const NPC_BOUND = FIELD_SIZE / 2 - 4;
 /** 障害物との衝突に使う敵の体半径 */
@@ -229,6 +233,18 @@ export class LocalNpcSim {
         dy /= inv;
       }
     }
+
+    // 進路上の岩を接線方向へ避ける (正面衝突での膠着防止)。
+    // 回る向きの個体癖は orbitSign を流用する
+    const steered = steerAroundObstacles(
+      this.pos,
+      { x: dx, y: dy },
+      NPC_BODY_RADIUS,
+      4 + params.speed,
+      this.orbitSign > 0 ? 1 : -1,
+    );
+    dx = steered.x;
+    dy = steered.y;
 
     const aggression = wave?.aggression ?? 1;
     // 速度は攻撃頻度ほど尖らせない (最終波でも +40% 程度に収める)

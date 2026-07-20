@@ -77,3 +77,52 @@ export function isBlocked(x: number, y: number, margin: number): boolean {
   }
   return false;
 }
+
+/**
+ * 進行方向の先を塞ぐ障害物を避ける操舵。
+ * 押し出し (resolveObstacles) だけだと、障害物の中心へ正面から向かう軌道で
+ * 押し出しと速度が真逆になり接線成分が生まれず膠着する。そこで移動前に
+ * 進路上の障害物を検知し、その接線方向へ進行方向を膨らませる。
+ * 障害物が進路の左右どちらに寄っているかで回る向きを決め、
+ * ちょうど正面の場合だけ preferredSide (呼び出し側の個体癖) で決める。
+ * @param dir 単位ベクトルの進行方向
+ * @returns 補正後の単位ベクトル (脅威がなければ dir をそのまま返す)
+ */
+export function steerAroundObstacles(
+  pos: Vec2,
+  dir: Vec2,
+  radius: number,
+  lookahead: number,
+  preferredSide: 1 | -1,
+): Vec2 {
+  let bestThreat = 0;
+  let steerX = 0;
+  let steerY = 0;
+  for (const o of MOVE_BLOCKERS) {
+    const ax = o.x - pos.x;
+    const ay = o.y - pos.y;
+    // 後方や遠方の障害物は無視する
+    const proj = ax * dir.x + ay * dir.y;
+    if (proj <= 0) continue;
+    const dist = Math.hypot(ax, ay);
+    if (dist - o.r - radius > lookahead) continue;
+    // 進路 (半直線) から障害物中心までの符号付き横距離。正 = 左に寄っている
+    const lat = dir.x * ay - dir.y * ax;
+    const clearance = o.r + radius + 0.5;
+    if (Math.abs(lat) >= clearance) continue;
+    const threat = 1 - Math.abs(lat) / clearance;
+    if (threat <= bestThreat) continue;
+    bestThreat = threat;
+    const side = lat > 0.05 ? -1 : lat < -0.05 ? 1 : preferredSide;
+    // 障害物中心まわりの接線方向 (side>0 = 反時計回り)
+    const inv = 1 / Math.max(dist, 0.0001);
+    steerX = -ay * inv * side;
+    steerY = ax * inv * side;
+  }
+  if (bestThreat <= 0) return dir;
+  // 正面度に応じて接線へ寄せる。正面直撃でも前進成分を残し、円に沿って回る
+  const outX = dir.x + steerX * bestThreat * 1.2;
+  const outY = dir.y + steerY * bestThreat * 1.2;
+  const inv = 1 / Math.max(Math.hypot(outX, outY), 0.0001);
+  return { x: outX * inv, y: outY * inv };
+}

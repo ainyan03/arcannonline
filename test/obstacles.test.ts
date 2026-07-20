@@ -4,6 +4,7 @@ import {
   OBSTACLES,
   isBlocked,
   resolveObstacles,
+  steerAroundObstacles,
 } from '../shared/src/obstacles';
 import { FIELD_SIZE } from '../shared/src/protocol';
 import { LocalPlayerSim } from '../client/src/sim/local-player';
@@ -59,6 +60,51 @@ describe('isBlocked', () => {
     const o = OBSTACLES[0];
     expect(isBlocked(o.x, o.y, 0)).toBe(true);
     expect(isBlocked(o.x + o.r + 1.1, o.y, 1)).toBe(false);
+  });
+});
+
+describe('steerAroundObstacles', () => {
+  // 孤立した岩 (52, 8, r=3) を使う
+  const rock = OBSTACLES[8];
+
+  it('deflects a head-on course to the side', () => {
+    const pos = { x: rock.x - 10, y: rock.y };
+    const dir = steerAroundObstacles(pos, { x: 1, y: 0 }, 0.7, 8, 1);
+    expect(Math.hypot(dir.x, dir.y)).toBeCloseTo(1, 5);
+    expect(Math.abs(dir.y)).toBeGreaterThan(0.3);
+    // preferredSide を反転すると逆側へ逸れる
+    const dir2 = steerAroundObstacles(pos, { x: 1, y: 0 }, 0.7, 8, -1);
+    expect(Math.sign(dir2.y)).toBe(-Math.sign(dir.y));
+  });
+
+  it('leaves clear courses untouched', () => {
+    // 岩の後方を向いている
+    const away = steerAroundObstacles(
+      { x: rock.x - 10, y: rock.y },
+      { x: -1, y: 0 },
+      0.7,
+      8,
+      1,
+    );
+    expect(away).toEqual({ x: -1, y: 0 });
+    // 岩が視程外
+    const far = steerAroundObstacles({ x: 70, y: 70 }, { x: 1, y: 0 }, 0.7, 8, 1);
+    expect(far).toEqual({ x: 1, y: 0 });
+  });
+
+  it('npc walks around a rock blocking the straight line to its target', () => {
+    // 岩の中心を正面に捉える軌道: 押し出しだけだと接線成分が出ず膠着していた
+    const npc = new LocalNpcSim('e'.repeat(64) + ':npc:0', 0);
+    npc.pos.x = rock.x - 20;
+    npc.pos.y = rock.y;
+    const target = { id: 't', pos: { x: rock.x + 20, y: rock.y } };
+    let now = 1_000;
+    for (let i = 0; i < 60 * 20; i++) {
+      now += 1000 / 60;
+      npc.update(1 / 60, now, [target]);
+    }
+    const d = Math.hypot(npc.pos.x - target.pos.x, npc.pos.y - target.pos.y);
+    expect(d).toBeLessThan(15);
   });
 });
 
