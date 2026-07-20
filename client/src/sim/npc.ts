@@ -38,6 +38,14 @@ export interface NpcAttack {
   targetPos: Vec2;
 }
 
+/** ウェーブ制からの敵挙動の調整。省略時は基準挙動 (常時再出現・強さ1) */
+export interface NpcWaveMod {
+  /** 小休止フェーズ中は倒された敵が再出現しない */
+  respawnPaused: boolean;
+  /** 強さ (1 = 基準)。攻撃間隔が 1/n 倍、移動速度が緩やかに上がる */
+  aggression: number;
+}
+
 function hashString(value: string): number {
   let h = 2166136261;
   for (let i = 0; i < value.length; i++) {
@@ -80,9 +88,14 @@ export class LocalNpcSim {
     return this.mode !== 'dead';
   }
 
-  update(dt: number, now: number, targets: readonly NpcTarget[]): NpcAttack | null {
+  update(
+    dt: number,
+    now: number,
+    targets: readonly NpcTarget[],
+    wave?: NpcWaveMod,
+  ): NpcAttack | null {
     if (!this.alive) {
-      if (now >= this.respawnAt) this.spawn(now);
+      if (!wave?.respawnPaused && now >= this.respawnAt) this.spawn(now);
       return null;
     }
     if (now < this.spawnUntil) {
@@ -134,7 +147,11 @@ export class LocalNpcSim {
       }
     }
 
-    const desiredSpeed = this.mode === 'attack' ? NPC_SPEED * 0.7 : NPC_SPEED;
+    const aggression = wave?.aggression ?? 1;
+    // 速度は攻撃頻度ほど尖らせない (最終波でも +40% 程度に収める)
+    const speedMul = 1 + (aggression - 1) * 0.4;
+    const desiredSpeed =
+      (this.mode === 'attack' ? NPC_SPEED * 0.7 : NPC_SPEED) * speedMul;
     const k = Math.min(1, dt * 4);
     this.vel.x += (dx * desiredSpeed - this.vel.x) * k;
     this.vel.y += (dy * desiredSpeed - this.vel.y) * k;
@@ -145,7 +162,7 @@ export class LocalNpcSim {
     }
 
     if (nearest && nearestDist <= ATTACK_RANGE && now >= this.nextAttackAt) {
-      this.nextAttackAt = now + 2_400 + this.random() * 1_200;
+      this.nextAttackAt = now + (2_400 + this.random() * 1_200) / aggression;
       return {
         targetId: nearest.id,
         targetPos: { x: nearest.pos.x, y: nearest.pos.y },

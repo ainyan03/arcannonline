@@ -142,6 +142,25 @@
         cursor: pointer;
         font-size: 15px;
       }
+      .wave-banner {
+        position: fixed;
+        top: 30%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: #ffd24d;
+        font: bold 34px sans-serif;
+        text-shadow: 0 0 12px rgba(255, 80, 60, 0.9), 0 2px 4px rgba(0, 0, 0, 0.8);
+        pointer-events: none;
+        white-space: nowrap;
+        z-index: 9;
+        animation: wave-banner-fade 3.2s ease-out forwards;
+      }
+      @keyframes wave-banner-fade {
+        0% { opacity: 0; transform: translate(-50%, -50%) scale(1.4); }
+        12% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        75% { opacity: 1; }
+        100% { opacity: 0; }
+      }
       .fire-btn {
         position: fixed;
         right: 20px;

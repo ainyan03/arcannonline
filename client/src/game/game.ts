@@ -48,8 +48,16 @@ import { BaseStatusUI } from '../ui/base-status';
 import { FireButtonUI } from '../ui/fire-button';
 import { StickUI } from '../ui/stick';
 import { UpdateBannerUI } from '../ui/update-banner';
+import { WaveBannerUI } from '../ui/wave-banner';
 import { LocalPlayerSim } from '../sim/local-player';
 import { isInFront } from '../sim/targeting';
+import {
+  WAVE_CALM_MS,
+  WAVES_PER_ROUND,
+  waveAggression,
+  waveStateAt,
+  type WaveState,
+} from '../sim/wave';
 import { RemotePlayerSim } from '../sim/remote-player';
 import {
   LocalNpcSim,
@@ -140,6 +148,9 @@ export class Game {
   private readonly baseView: BaseView;
   private readonly baseStatus: BaseStatusUI;
   private lastBaseHp = BASE_MAX_HP;
+  private readonly waveBanner: WaveBannerUI;
+  /** 直前フレームのウェーブ状態 (フェーズ遷移の告知判定用)。参加直後は告知しない */
+  private lastWave: WaveState | null = null;
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -279,6 +290,7 @@ export class Game {
 
     // 仮想発射ボタン: 押している間はクールダウン毎に連射される
     this.fireBtn = new FireButtonUI(container);
+    this.waveBanner = new WaveBannerUI(container);
     this.fireBtn.onHoldChange = (held) => {
       this.fireHeld = held;
       if (held) this.fire();
@@ -727,11 +739,34 @@ export class Game {
     const dt = Math.min(Math.max((now - this.lastNpcUpdate) / 1000, 0), 0.25);
     if (dt <= 0) return;
     this.lastNpcUpdate = now;
+    const wave = waveStateAt(Date.now());
+    this.announceWaveTransition(wave);
+    const waveMod = {
+      respawnPaused: wave.phase === 'calm',
+      aggression: waveAggression(wave.tier),
+    };
     // 拠点防衛ループ: 敵はプレイヤーではなく中央の魔力灯を主目標にする。
     const targets: NpcTarget[] = [{ id: BASE_ID, pos: { x: 0, y: 0 } }];
     for (const npc of this.localNpcs) {
-      const attack = npc.sim.update(dt, now, targets);
+      const attack = npc.sim.update(dt, now, targets, waveMod);
       if (attack) this.fireNpc(npc.sim, attack);
+    }
+  }
+
+  /** ウェーブのフェーズ遷移を告知する (参加直後の初回は現在地の記録のみ) */
+  private announceWaveTransition(wave: WaveState): void {
+    const prev = this.lastWave;
+    this.lastWave = wave;
+    if (!prev || (prev.index === wave.index && prev.phase === wave.phase)) return;
+    if (wave.phase === 'assault') {
+      this.waveBanner.show(`第${wave.number}波 襲来!`);
+      this.chat.addLine('', `* 第${wave.number}波が襲来!`, true);
+    } else {
+      this.chat.addLine(
+        '',
+        `* 敵の波が引いた (次の波まで${Math.round(WAVE_CALM_MS / 1000)}秒)`,
+        true,
+      );
     }
   }
 
@@ -1374,6 +1409,16 @@ export class Game {
     );
   }
 
+  private waveHudLine(): string {
+    const wave = this.lastWave ?? waveStateAt(Date.now());
+    const remain = Math.max(0, Math.ceil((wave.phaseEndsAt - Date.now()) / 1000));
+    if (wave.phase === 'assault') {
+      return `wave: 第${wave.number}波 襲来中 (残り${remain}s)`;
+    }
+    const nextNumber = (wave.number % WAVES_PER_ROUND) + 1;
+    return `wave: 小休止 (第${nextNumber}波まで ${remain}s)`;
+  }
+
   private updateHud(): void {
     const scriptName = DANMAKU_SCRIPTS[this.scriptId]?.name ?? this.scriptId;
     this.fireBtn.setScriptName(scriptName);
@@ -1397,6 +1442,7 @@ export class Game {
       `ice: ${iceSummary()}\n` +
       `${this.room.stats}\n` +
       `魔力灯: ${Math.ceil(this.baseDefense.hp())}/${BASE_MAX_HP}\n` +
+      `${this.waveHudLine()}\n` +
       `enemies: ${this.localNpcs.filter((npc) => npc.sim.alive).length}` +
       ` local / ${this.remoteNpcs.size} remote\n` +
       `bullets: ${this.engine.aliveCount} fps: ${this.fps}\n` +
