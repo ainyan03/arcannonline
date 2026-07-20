@@ -1,13 +1,16 @@
 import * as THREE from 'three';
-import {
-  MISSILE_STAGGER_MS,
-  MISSILE_TRAVEL_MS,
-} from '../../../shared/src/protocol';
+import { MISSILE_STAGGER_MS } from '../../../shared/src/protocol';
 
 /** 標的の現在の表示位置を返す (居なくなったら null) */
 export type MissileTargetResolver = (
   targetId: string,
 ) => { x: number; y: number } | null;
+
+/** 発射1発ぶんの指定 (飛行時間は距離比例で呼び出し側が算出する) */
+export interface MissileLaunch {
+  targetId: string;
+  travelMs: number;
+}
 
 /** 軌跡リボンの頂点数 (長いほど尾が伸びる) */
 const TRAIL_POINTS = 18;
@@ -89,11 +92,10 @@ export class MissileView {
   launch(
     fromX: number,
     fromY: number,
-    targets: readonly string[],
+    launches: readonly MissileLaunch[],
     now: number,
-    remainingMs = MISSILE_TRAVEL_MS,
   ): void {
-    targets.forEach((targetId, i) => {
+    launches.forEach(({ targetId, travelMs }, i) => {
       const side = i % 2 === 0 ? 1 : -1;
       const spread = 6 + (i % 3) * 5;
 
@@ -135,7 +137,7 @@ export class MissileView {
         lastY: fromY,
         curve: side * spread,
         startedAt,
-        arriveAt: startedAt + Math.max(remainingMs, 50),
+        arriveAt: startedAt + Math.max(travelMs, 50),
         launched: false,
         done: false,
       });

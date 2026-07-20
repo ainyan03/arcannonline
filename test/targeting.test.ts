@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { assignMissileTargets, isInFront } from '../client/src/sim/targeting';
+import {
+  MISSILE_SPEED,
+  MISSILE_TRAVEL_MAX_MS,
+  MISSILE_TRAVEL_MIN_MS,
+  missileTravelMs,
+} from '../shared/src/protocol';
 
 describe('isInFront', () => {
   const origin = { x: 2, y: 3 };
@@ -14,6 +20,15 @@ describe('isInFront', () => {
     expect(isInFront(origin, 0, { x: -8, y: 3 })).toBe(false);
     expect(isInFront(origin, 0, { x: 2, y: 13 })).toBe(false);
     expect(isInFront(origin, 0, origin)).toBe(false);
+  });
+});
+
+describe('missileTravelMs', () => {
+  it('scales with distance at constant apparent speed and clamps', () => {
+    expect(missileTravelMs(MISSILE_SPEED)).toBe(1000);
+    expect(missileTravelMs(MISSILE_SPEED / 2)).toBe(500);
+    expect(missileTravelMs(0)).toBe(MISSILE_TRAVEL_MIN_MS);
+    expect(missileTravelMs(10_000)).toBe(MISSILE_TRAVEL_MAX_MS);
   });
 });
 

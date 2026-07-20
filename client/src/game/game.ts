@@ -25,7 +25,8 @@ import {
   MISSILE_DAMAGE,
   MISSILE_RANGE,
   MISSILE_STAGGER_MS,
-  MISSILE_TRAVEL_MS,
+  MISSILE_TRAVEL_MAX_MS,
+  missileTravelMs,
   BASE_HIT_RADIUS,
   BASE_ID,
   BASE_MAX_HP,
@@ -271,15 +272,9 @@ export class Game {
     this.world.scene.add(createObstacles());
     // ミサイルは視覚と判定を分離: 表示は標的の現在表示位置へ吸い込まれる
     // 曲線 (端末ごとに違ってよい)、ダメージは担当ピアが到達時刻に確定する
-    this.missileView = new MissileView(this.world.scene, (id) => {
-      const local = this.localNpcs.find((npc) => npc.sim.id === id);
-      if (local?.sim.alive) return { x: local.sim.pos.x, y: local.sim.pos.y };
-      const remote = this.remoteNpcs.get(id);
-      if (remote && remote.sim.mode !== 'dead') {
-        return { x: remote.sim.lastX, y: remote.sim.lastY };
-      }
-      return null;
-    });
+    this.missileView = new MissileView(this.world.scene, (id) =>
+      this.missileTargetPos(id),
+    );
     this.missileView.onArrive = (x, y) => {
       this.particles.burst(x, y, new THREE.Color(0xbf99ff), 2.2);
       this.audio.playHit();
@@ -508,7 +503,7 @@ export class Game {
         0,
         Date.now() - ev.at - (Number.isFinite(skew) ? (skew as number) : 0),
       );
-      this.handleMissiles(id, ev, Math.min(delay, MISSILE_TRAVEL_MS));
+      this.handleMissiles(id, ev, Math.min(delay, MISSILE_TRAVEL_MAX_MS));
     };
     this.room.onBulletKill = (fireId, spawnIdx) =>
       this.engine.killByFire(fireId, spawnIdx);
@@ -1714,21 +1709,44 @@ export class Game {
     return found.map((entry) => entry.id);
   }
 
-  /** ミサイル発射の適用 (自分の発射・リモート発射の共通経路) */
+  /** ミサイルの標的の現在表示位置 (視覚の吸い込み先・飛行時間の算出に使う) */
+  private missileTargetPos(id: string): Vec2 | null {
+    const local = this.localNpcs.find((npc) => npc.sim.id === id);
+    if (local?.sim.alive) return { x: local.sim.pos.x, y: local.sim.pos.y };
+    const remote = this.remoteNpcs.get(id);
+    if (remote && remote.sim.mode !== 'dead') {
+      return { x: remote.sim.lastX, y: remote.sim.lastY };
+    }
+    return null;
+  }
+
+  /**
+   * ミサイル発射の適用 (自分の発射・リモート発射の共通経路)。
+   * 飛行時間は標的までの距離に比例させ (missileTravelMs)、どの距離でも
+   * ホーミングの見かけ速度が一定になる。各端末が自分の見ている標的位置から
+   * 同じ式で算出するため追加の同期は不要 (ダメージ確定は担当ピアの計算が正)
+   */
   private handleMissiles(fromId: string, ev: MissileEvent, delayMs: number): void {
     if (this.seenFireIds.has(ev.id)) return;
     this.seenFireIds.add(ev.id);
-    const remaining = Math.max(MISSILE_TRAVEL_MS - delayMs, 50);
     const now = performance.now();
-    this.missileView.launch(ev.x, ev.y, ev.targets, now, remaining);
+    const launches = ev.targets.map((targetId) => {
+      const pos = this.missileTargetPos(targetId);
+      const dist = pos
+        ? Math.hypot(pos.x - ev.x, pos.y - ev.y)
+        : MISSILE_RANGE / 2;
+      const travelMs = Math.max(missileTravelMs(dist) - delayMs, 50);
+      return { targetId, travelMs };
+    });
+    this.missileView.launch(ev.x, ev.y, launches, now);
     // 自分担当の標的ぶんだけ、到達時刻に必中ダメージを確定する
     // (弾同士の相殺は経由しない)。発射時差ぶん到達もずらし、見た目と揃える
-    ev.targets.forEach((targetId, i) => {
+    launches.forEach(({ targetId, travelMs }, i) => {
       if (!npcBelongsToPeer(targetId, this.room.selfId)) return;
       this.pendingMissileHits.push({
         targetId,
         shooterId: fromId,
-        arriveAt: now + remaining + i * MISSILE_STAGGER_MS,
+        arriveAt: now + travelMs + i * MISSILE_STAGGER_MS,
       });
     });
   }

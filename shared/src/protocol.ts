@@ -77,10 +77,24 @@ export const MAX_FIRE_BATCH = 8;
 export const MISSILE_COUNT = 6;
 /** 1発のダメージ (ウィスプを一撃) */
 export const MISSILE_DAMAGE = 24;
-/** 発射から必中までの時間 */
-export const MISSILE_TRAVEL_MS = 900;
+/**
+ * ミサイルの見かけ速度 (距離/秒)。飛行時間は距離に比例し、
+ * どの距離でもホーミングの速度が一定に見える
+ */
+export const MISSILE_SPEED = 32;
+/** 飛行時間の下限・上限 (至近でも一瞬の溜め、最遠 = 射程 MISSILE_RANGE ぶん) */
+export const MISSILE_TRAVEL_MIN_MS = 250;
+export const MISSILE_TRAVEL_MAX_MS = 2_500;
 /** 1発ごとの発射時差 (連射の見た目。ダメージ到達も同じ時差で揃える) */
 export const MISSILE_STAGGER_MS = 80;
+
+/** 標的までの距離に応じた飛行時間 (ms) */
+export function missileTravelMs(distance: number): number {
+  return Math.min(
+    Math.max((distance / MISSILE_SPEED) * 1000, MISSILE_TRAVEL_MIN_MS),
+    MISSILE_TRAVEL_MAX_MS,
+  );
+}
 /** ボムとしてのエネルギーコスト */
 export const MISSILE_BOMB_COST = 120;
 /** 1イベントに載るミサイル数の上限 (検証用) */
