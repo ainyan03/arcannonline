@@ -36,6 +36,9 @@ import {
   BULLET_INHERIT_VELOCITY,
   CHAT_LOG_MAX,
   ENERGY_MAX,
+  SANCTUARY_ENERGY_REGEN_PER_SEC,
+  SANCTUARY_HP_REGEN_PER_SEC,
+  SANCTUARY_RADIUS,
   FIRE_COOLDOWN_MS,
   MAX_FIRE_CATCHUP_TICKS,
   MAX_HP,
@@ -237,6 +240,8 @@ export class Game {
   }[] = [];
   private lastFireAt = 0;
   private lastAutoFireAt = 0;
+  /** 聖域の回復エフェクトを出した時刻 (連発防止) */
+  private sanctuaryFxAt = 0;
   private viewportW = 0;
   private viewportH = 0;
   private fireHeld = false;
@@ -842,6 +847,7 @@ export class Game {
     this.bulletView.sync(this.engine.bullets, this.room.selfId);
     this.particles.update(dt);
     this.missileView.update(now);
+    this.applySanctuary(dt, now);
 
     this.camera.update(
       this.worldPosTmp.set(this.player.pos.x, 0, this.player.pos.y),
@@ -1272,6 +1278,8 @@ export class Game {
   private fire(): void {
     const now = performance.now();
     if (now - this.lastFireAt < FIRE_COOLDOWN_MS) return;
+    // 聖域内は攻撃を撃てない (回復とのトレードオフ)
+    if (this.inSanctuary()) return;
     // 月の魔導士のボムは追尾ミサイル (DSL 弾幕ではない特殊経路)
     if (this.classStyle === 2) {
       this.fireMissiles(now);
@@ -1354,6 +1362,8 @@ export class Game {
    * ゲートは通さない (強攻撃の展開中でも通常ショットは撃てる)
    */
   private autoFire(now: number): void {
+    // 聖域内は通常ショットも止まる (回復とのトレードオフ)
+    if (this.inSanctuary()) return;
     // クールダウンと弾道はクラス別。高速移動中はバラつきの大きい弾道になる
     const shot = classShotFor(this.classStyle);
     if (now - this.lastAutoFireAt < shot.cooldownMs) return;
@@ -1795,6 +1805,39 @@ export class Game {
     }
   }
 
+  /** 点灯中の魔力灯の聖域内か (回復エリア・ただし攻撃不能) */
+  private inSanctuary(): boolean {
+    return (
+      this.baseDefense.lit() &&
+      Math.hypot(this.player.pos.x, this.player.pos.y) <= SANCTUARY_RADIUS
+    );
+  }
+
+  /** 聖域の回復を自機へ適用する (自己申告制なのでローカル完結) */
+  private applySanctuary(dt: number, now: number): void {
+    if (!this.inSanctuary()) return;
+    const healing =
+      this.player.hp < MAX_HP || this.player.energy < ENERGY_MAX;
+    this.player.hp = Math.min(
+      this.player.hp + SANCTUARY_HP_REGEN_PER_SEC * dt,
+      MAX_HP,
+    );
+    this.player.energy = Math.min(
+      this.player.energy + SANCTUARY_ENERGY_REGEN_PER_SEC * dt,
+      ENERGY_MAX,
+    );
+    // 回復している間だけ、足元に淡い光を定期的に出す
+    if (healing && now >= this.sanctuaryFxAt) {
+      this.sanctuaryFxAt = now + 500;
+      this.particles.burst(
+        this.player.pos.x,
+        this.player.pos.y,
+        new THREE.Color(0x8fffd8),
+        0.5,
+      );
+    }
+  }
+
   /** 発射イベントIDを記録し、長時間プレイでも集合を有界に保つ。 */
   private rememberFireId(id: string): boolean {
     if (this.seenFireIds.has(id)) return false;
@@ -1901,14 +1944,17 @@ export class Game {
           return planned === 0 ? null : MISSILE_COST_PER_SHOT * planned;
         })()
       : this.estimateSelectedCost();
+    const sanctuary = this.inSanctuary();
     this.fireBtn.setEnabled(
-      estCost !== null &&
+      !sanctuary &&
+        estCost !== null &&
         this.player.energy >= estCost &&
         (missileBomb || !this.engine.ownerHasRun(this.room.selfId)),
     );
     this.hud.textContent =
       `${this.name} (${this.room.selfId.slice(0, 8)})\n` +
-      `HP: ${this.player.hp}/${MAX_HP}  EN: ${Math.floor(this.player.energy)}/${ENERGY_MAX}` +
+      `HP: ${Math.ceil(this.player.hp)}/${MAX_HP}  EN: ${Math.floor(this.player.energy)}/${ENERGY_MAX}` +
+      `${sanctuary ? '\n聖域内: 回復中 (攻撃不可)' : ''}` +
       ` (コスト目安 ${estCost === null ? '-' : Math.ceil(estCost)})\n` +
       `relays: ${this.room.relayStatus}\n` +
       `peers: ${this.room.peerCount}\n` +

@@ -18,7 +18,7 @@ export type Vec2 = { x: number; y: number };
  * ピアを見つけたクライアントは UI でアップデート (リロード) を促す。
  * バージョン不一致でも接続・プレイは継続する (強制切断はしない)
  */
-export const PROTO_VERSION = 27;
+export const PROTO_VERSION = 28;
 
 /** フィールド一辺の長さ */
 export const FIELD_SIZE = 200;
@@ -270,6 +270,18 @@ export const NPC_KINDS: Record<NpcKind, { name: string; maxHp: number }> = {
   shield: { name: 'ゴーレム', maxHp: 64 },
   boss: { name: 'アークファントム', maxHp: 3600 },
 };
+
+// --- 魔力灯の聖域 -----------------------------------------------------------
+// 点灯中の魔力灯の周囲は回復エリア (聖域)。ただし攻撃は撃てない。
+// HP・エネルギー・発射はすべて自己申告/自己制御のため同期は不要で、
+// 各クライアントが自分に対してのみ適用する。境界は地面の光る円で可視化する
+
+/** 聖域の半径 (敵の射程より狭く、円内は「撃たれるが反撃できない」) */
+export const SANCTUARY_RADIUS = 10;
+/** 聖域内のHP回復 (毎秒) */
+export const SANCTUARY_HP_REGEN_PER_SEC = 10;
+/** 聖域内のエネルギー追加回復 (毎秒、通常回復に加算) */
+export const SANCTUARY_ENERGY_REGEN_PER_SEC = 30;
 
 /** ボスの基礎HPと、参加人数1人ごとの加算 (maxHp は検証上限を兼ねる) */
 export const BOSS_BASE_HP = 900;

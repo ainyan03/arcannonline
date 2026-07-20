@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { SANCTUARY_RADIUS } from '../../../shared/src/protocol';
 
 /** フィールド中央の防衛対象「魔力灯」。 */
 export class BaseView {
@@ -8,9 +9,43 @@ export class BaseView {
   private readonly crystalMaterial: THREE.MeshStandardMaterial;
   private readonly rings: THREE.Mesh[] = [];
   private readonly light: THREE.PointLight;
+  /** 聖域 (回復エリア) の境界リングと床面。点灯中だけ表示する */
+  private readonly sanctuaryRing: THREE.Mesh;
+  private readonly sanctuaryRingMaterial: THREE.MeshBasicMaterial;
+  private readonly sanctuaryDiscMaterial: THREE.MeshBasicMaterial;
+  private readonly sanctuaryDisc: THREE.Mesh;
 
   constructor() {
     this.object.name = 'arcane-beacon';
+
+    // 聖域の可視化: 淡く光る床面と、脈動する境界リング
+    this.sanctuaryDiscMaterial = new THREE.MeshBasicMaterial({
+      color: 0x7edfff,
+      transparent: true,
+      opacity: 0.07,
+      depthWrite: false,
+    });
+    this.sanctuaryDisc = new THREE.Mesh(
+      new THREE.CircleGeometry(SANCTUARY_RADIUS, 48),
+      this.sanctuaryDiscMaterial,
+    );
+    this.sanctuaryDisc.rotation.x = -Math.PI / 2;
+    this.sanctuaryDisc.position.y = 0.05;
+    this.object.add(this.sanctuaryDisc);
+    this.sanctuaryRingMaterial = new THREE.MeshBasicMaterial({
+      color: 0x7edfff,
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    this.sanctuaryRing = new THREE.Mesh(
+      new THREE.RingGeometry(SANCTUARY_RADIUS - 0.35, SANCTUARY_RADIUS, 64),
+      this.sanctuaryRingMaterial,
+    );
+    this.sanctuaryRing.rotation.x = -Math.PI / 2;
+    this.sanctuaryRing.position.y = 0.06;
+    this.object.add(this.sanctuaryRing);
 
     const pedestal = new THREE.Mesh(
       new THREE.CylinderGeometry(2.2, 2.8, 0.8, 24),
@@ -68,5 +103,13 @@ export class BaseView {
     this.rings[0].rotation.z = now * 0.00045;
     this.rings[1].rotation.z = -now * 0.00032;
     for (const ring of this.rings) ring.visible = lit;
+    // 聖域は点灯中だけ有効。境界リングをゆっくり脈動させる
+    this.sanctuaryDisc.visible = lit;
+    this.sanctuaryRing.visible = lit;
+    if (lit) {
+      const pulse = Math.sin(now * 0.002);
+      this.sanctuaryRingMaterial.opacity = 0.4 + pulse * 0.15;
+      this.sanctuaryDiscMaterial.opacity = 0.06 + pulse * 0.02;
+    }
   }
 }
