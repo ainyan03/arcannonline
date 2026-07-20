@@ -76,8 +76,23 @@
       .chat-log {
         width: fit-content;
         max-width: min(360px, 70vw);
+        max-height: min(180px, 32vh);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        /* スクロール操作を受けるため、チャット枠だけ pointer-events を戻す */
+        pointer-events: auto;
         word-break: break-all;
         margin-bottom: 6px;
+      }
+      .chat-log .past {
+        opacity: 0.75;
+      }
+      .chat-log::-webkit-scrollbar {
+        width: 6px;
+      }
+      .chat-log::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.28);
+        border-radius: 3px;
       }
       /* メッセージがある間だけ、背後のフィールドを暗くして文字を読みやすくする */
       .chat-log:not(:empty) {
