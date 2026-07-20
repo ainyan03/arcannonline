@@ -39,6 +39,7 @@ import {
   type FireEvent,
   type ChatLogEntry,
   type NpcKind,
+  type NpcStatePayload,
   type Vec2,
 } from '../../../shared/src/protocol';
 import { isNpcId, npcBelongsToPeer } from '../../../shared/src/validation';
@@ -52,7 +53,11 @@ import { iceSummary } from '../net/rtc-debug';
 import { benchEngine } from '../sim/danmaku/bench';
 import { BaseDefense, normalizeBaseSnapshotTimes } from '../sim/base-defense';
 import { BulletEngine } from '../sim/danmaku/engine';
-import { ChatUI } from '../ui/chat';
+import {
+  ChatUI,
+  sortChatHistoryLines,
+  type ChatHistoryLine,
+} from '../ui/chat';
 import { BaseStatusUI } from '../ui/base-status';
 import { FireButtonUI } from '../ui/fire-button';
 import { StickUI } from '../ui/stick';
@@ -65,6 +70,7 @@ import {
   WAVE_COMPOSITION,
   WAVES_PER_ROUND,
   correctedRoomNow,
+  shouldHostBoss,
   waveAggression,
   waveStateAt,
   type WaveState,
@@ -142,6 +148,13 @@ interface RemoteNpc {
   view: EnemyView;
 }
 
+interface ReceivedChatHistory {
+  sourceId: string;
+  entry: ChatLogEntry;
+  /** state 受信前は null。送信データ内の表示名は信用しない */
+  name: string | null;
+}
+
 export class Game {
   private readonly world: World;
   private readonly camera: FollowCamera;
@@ -183,6 +196,8 @@ export class Game {
   private readonly chatHistory: ChatLogEntry[] = [];
   /** 表示・履歴の重複排除 (履歴同期で同じ発言が複数ピアから届く) */
   private readonly seenChatIds = new Set<string>();
+  /** 各ピアから受信した履歴。名前解決後に全ピア横断で時刻順へ再描画する */
+  private readonly receivedChatHistory: ReceivedChatHistory[] = [];
 
   private lastFrame = 0;
   private hudTimer = 0;
@@ -403,6 +418,7 @@ export class Game {
         this.updateHud();
       }
       remote.sim.push(state, now);
+      this.resolveChatHistoryName(id, remote.sim.name);
       // 受信イベントはバックグラウンドタブでも届くため、担当NPCのAIも
       // ここで進めてタイマー間引きによる停止を緩和する。
       this.updateNpcsToNow(now);
@@ -435,14 +451,13 @@ export class Game {
         this.ensureNpcViewKind(npc, false);
         npc.view.setState(state.hp, state.mode);
         if (state.k === 'boss') {
-          // リーダー交代時の HP 引き継ぎと、撃破の重複告知防止に使う
+          // HP は同一ラウンド内で減る方向にだけ観測し、遅延した旧スナップ
+          // ショットでリーダー交代後のボスが回復しないようにする
           const round = waveStateAt(this.roomNow()).round;
+          this.observeBossState(state, round);
           if (state.mode === 'dead') {
             if (wasAlive) this.onBossDefeated();
             else this.bossDefeatedRound = round;
-          } else {
-            this.lastBossHp = state.hp;
-            this.lastBossRound = round;
           }
         }
         if (wasAlive && state.mode === 'dead') {
@@ -455,6 +470,13 @@ export class Game {
         }
         if (state.mode === 'dead' && this.targetId === state.id) {
           this.targetId = null;
+        }
+      }
+      // ボスは動的スロットなので、担当ピアの最新バッチから消えたら退場済み。
+      // 明示的な削除通知がなくても小休止・リーダー交代へすぐ追従する。
+      for (const [id, npc] of this.remoteNpcs) {
+        if (npc.ownerId === ownerId && npc.sim.kind === 'boss' && !seen.has(id)) {
+          this.removeRemoteNpc(id);
         }
       }
     };
@@ -492,17 +514,17 @@ export class Game {
     };
     this.room.onChatLog = (id, entries) => {
       // 履歴は「送信ピア自身の発言」だけを受け付ける約束。表示名は
-      // 転送データからは取らず、送信ピアの実体から解決する (捏造防止)
-      const name = this.remotes.get(id)?.sim.name ?? id.slice(0, 8);
-      const fresh = entries
-        .filter((entry) => this.markChatSeen(entry.id))
-        .sort((a, b) => a.at - b.at);
-      this.chat.addHistoryLines(
-        fresh.map((entry) => ({
-          name: entry.n === '' ? '' : name,
-          text: entry.t,
-        })),
-      );
+      // 転送データからは取らず、state の到着まで保留する (捏造・ID表示防止)
+      const remoteName = this.remotes.get(id)?.sim.name ?? null;
+      for (const entry of entries) {
+        if (!this.markChatSeen(entry.id)) continue;
+        this.receivedChatHistory.push({
+          sourceId: id,
+          entry,
+          name: entry.n === '' ? '' : remoteName,
+        });
+      }
+      this.renderChatHistory();
     };
     this.room.onPeerLeave = (id) => {
       const name = this.remotes.get(id)?.sim.name;
@@ -888,7 +910,7 @@ export class Game {
   /** ボスの召喚・退場。最小ピアIDのクライアントだけがボスを担当する */
   private manageBoss(wave: WaveState, now: number): void {
     const bossIdx = this.localNpcs.findIndex((npc) => npc.sim.kind === 'boss');
-    const canHost = wave.boss && this.isBossLeader();
+    const canHost = shouldHostBoss(wave, this.isBossLeader());
     if (bossIdx >= 0 && !canHost) {
       // 段の終了 or リーダー交代: 自分のボスを退場させる
       // (撃破済みの死体は段の間 dead を配信し続けるためここには来ない)
@@ -900,9 +922,7 @@ export class Game {
     }
     if (
       bossIdx < 0 &&
-      canHost &&
-      wave.phase === 'assault' &&
-      this.bossDefeatedRound !== wave.round
+      canHost
     ) {
       const sim = new LocalNpcSim(
         `${this.room.selfId}:npc:${BOSS_NPC_SLOT}`,
@@ -910,7 +930,11 @@ export class Game {
         'boss',
       );
       // リーダー交代の引き継ぎ: 同ラウンドで観測済みの HP から再開する
-      if (this.lastBossRound === wave.round && this.lastBossHp !== null) {
+      if (this.bossDefeatedRound === wave.round) {
+        // 撃破済みの墓標も新リーダーが配信し、さらに後から来た参加者へ伝える
+        sim.hp = 0;
+        sim.mode = 'dead';
+      } else if (this.lastBossRound === wave.round && this.lastBossHp !== null) {
         sim.hp = Math.max(1, this.lastBossHp);
       }
       const view = new EnemyView(sim.id, true, 'boss');
@@ -939,6 +963,52 @@ export class Game {
       }
     }
     return true;
+  }
+
+  /** state 到着前に保留した履歴へ、検証済みの送信元表示名を割り当てる。 */
+  private resolveChatHistoryName(sourceId: string, name: string): void {
+    let changed = false;
+    for (const item of this.receivedChatHistory) {
+      if (item.sourceId === sourceId && item.name === null) {
+        item.name = name;
+        changed = true;
+      }
+    }
+    if (changed) this.renderChatHistory();
+  }
+
+  /** 解決済みの全ピア履歴を、時計ずれ補正後の時刻でまとめて描画する。 */
+  private renderChatHistory(): void {
+    const lines: ChatHistoryLine[] = [];
+    for (const item of this.receivedChatHistory) {
+      if (item.name === null) continue;
+      const skew = this.remotes.get(item.sourceId)?.sim.clockSkewMin;
+      lines.push({
+        id: item.entry.id,
+        name: item.name,
+        text: item.entry.t,
+        at: item.entry.at + (Number.isFinite(skew) ? (skew as number) : 0),
+      });
+    }
+    this.chat.setHistoryLines(sortChatHistoryLines(lines));
+  }
+
+  /** 観測したボス状態を、現在のローカル担当へ減少方向に収束させる。 */
+  private observeBossState(state: NpcStatePayload, round: number): void {
+    if (this.lastBossRound !== round) {
+      this.lastBossRound = round;
+      this.lastBossHp = state.hp;
+    } else {
+      this.lastBossHp = Math.min(this.lastBossHp ?? state.hp, state.hp);
+    }
+    const localBoss = this.localNpcs.find((npc) => npc.sim.kind === 'boss');
+    if (!localBoss) return;
+    if (state.mode === 'dead') {
+      localBoss.sim.hp = 0;
+      localBoss.sim.mode = 'dead';
+    } else if (localBoss.sim.alive) {
+      localBoss.sim.hp = Math.min(localBoss.sim.hp, state.hp);
+    }
   }
 
   /**

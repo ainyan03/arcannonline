@@ -1,6 +1,20 @@
 /** 保持する最大行数。表示領域は CSS の max-height でスクロールになる */
 const MAX_LINES = 200;
 
+export interface ChatHistoryLine {
+  id: string;
+  name: string;
+  text: string;
+  at: number;
+}
+
+/** 複数ピアから届いた履歴を、受信順ではなく発言時刻で安定して並べる。 */
+export function sortChatHistoryLines(
+  lines: readonly ChatHistoryLine[],
+): ChatHistoryLine[] {
+  return [...lines].sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+}
+
 /**
  * チャット。入力枠は画面最下部に常設し、自由に編集して Enter (確定) で送信する。
  * Enter キー (ゲーム側) で入力欄へフォーカス、Escape でゲーム操作へ戻る。
@@ -91,13 +105,13 @@ export class ChatUI {
     if (stick) this.scrollToBottom();
   }
 
-  /**
-   * 接続時に受け取った過去ログを、現在の行より前 (上) へ時系列順に挿入する。
-   * 呼び出し側で時刻順に整列済みであること
-   */
-  addHistoryLines(lines: readonly { name: string; text: string }[]): void {
-    if (lines.length === 0) return;
+  /** 接続時に集約した過去ログを、現在の行より前へ時系列順に再描画する。 */
+  setHistoryLines(lines: readonly { name: string; text: string }[]): void {
     const stick = this.isNearBottom();
+    const previousHeight = this.log.scrollHeight;
+    const previousTop = this.log.scrollTop;
+    for (const line of this.log.querySelectorAll('.past')) line.remove();
+    if (lines.length === 0) return;
     const fragment = document.createDocumentFragment();
     for (const { name, text } of lines) {
       const line = this.makeLine(name, text, name === '');
@@ -106,7 +120,12 @@ export class ChatUI {
     }
     this.log.insertBefore(fragment, this.log.firstChild);
     this.trim();
-    if (stick) this.scrollToBottom();
+    if (stick) {
+      this.scrollToBottom();
+    } else {
+      // 履歴の再集約で上に行が増減しても、読んでいる本文の位置を維持する
+      this.log.scrollTop = previousTop + (this.log.scrollHeight - previousHeight);
+    }
   }
 
   private makeLine(name: string, text: string, system: boolean): HTMLElement {

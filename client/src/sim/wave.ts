@@ -34,6 +34,11 @@ export interface WaveState {
   phaseEndsAt: number;
 }
 
+/** ボスを所有してよいのは、ボス襲来中のリーダーだけ。小休止では退場する。 */
+export function shouldHostBoss(wave: WaveState, isLeader: boolean): boolean {
+  return wave.boss && wave.phase === 'assault' && isLeader;
+}
+
 /** 壁時計 (Date.now) から現在のウェーブ状態を決定論的に算出する */
 export function waveStateAt(nowMs: number): WaveState {
   const index = Math.floor(nowMs / WAVE_CYCLE_MS);

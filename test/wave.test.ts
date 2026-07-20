@@ -5,6 +5,7 @@ import {
   WAVE_CALM_MS,
   WAVE_CYCLE_MS,
   WAVES_PER_ROUND,
+  shouldHostBoss,
   correctedRoomNow,
   waveAggression,
   waveStateAt,
@@ -19,6 +20,13 @@ describe('waveStateAt', () => {
     expect(w.index).toBe(7);
     expect(w.phase).toBe('assault');
     expect(w.phaseEndsAt).toBe(t + WAVE_ASSAULT_MS);
+  });
+
+  it('hosts the boss only during the assault phase', () => {
+    const bossStart = WAVE_CYCLE_MS * WAVES_PER_ROUND;
+    expect(shouldHostBoss(waveStateAt(bossStart), true)).toBe(true);
+    expect(shouldHostBoss(waveStateAt(bossStart + WAVE_ASSAULT_MS), true)).toBe(false);
+    expect(shouldHostBoss(waveStateAt(bossStart), false)).toBe(false);
   });
 
   it('switches to calm after the assault window', () => {
