@@ -24,6 +24,7 @@ import {
   MISSILE_COUNT,
   MISSILE_DAMAGE,
   MISSILE_RANGE,
+  MISSILE_STAGGER_MS,
   MISSILE_TRAVEL_MS,
   BASE_HIT_RADIUS,
   BASE_ID,
@@ -280,9 +281,11 @@ export class Game {
       return null;
     });
     this.missileView.onArrive = (x, y) => {
-      this.particles.burst(x, y, new THREE.Color(0xbf99ff), 1.6);
+      this.particles.burst(x, y, new THREE.Color(0xbf99ff), 2.2);
       this.audio.playHit();
     };
+    // 1発ずつ飛び出すたびに連射音を鳴らす
+    this.missileView.onLaunch = () => this.audio.playAutoFire();
     this.baseStatus = new BaseStatusUI(container);
     this.baseStatus.update(BASE_MAX_HP, BASE_MAX_HP, true);
     this.profiles = new RemoteProfiles((id, profile) => {
@@ -1719,15 +1722,15 @@ export class Game {
     const now = performance.now();
     this.missileView.launch(ev.x, ev.y, ev.targets, now, remaining);
     // 自分担当の標的ぶんだけ、到達時刻に必中ダメージを確定する
-    // (弾同士の相殺は経由しない)
-    for (const targetId of ev.targets) {
-      if (!npcBelongsToPeer(targetId, this.room.selfId)) continue;
+    // (弾同士の相殺は経由しない)。発射時差ぶん到達もずらし、見た目と揃える
+    ev.targets.forEach((targetId, i) => {
+      if (!npcBelongsToPeer(targetId, this.room.selfId)) return;
       this.pendingMissileHits.push({
         targetId,
         shooterId: fromId,
-        arriveAt: now + remaining,
+        arriveAt: now + remaining + i * MISSILE_STAGGER_MS,
       });
-    }
+    });
   }
 
   /** 到達時刻を過ぎたミサイルの必中ダメージを、担当NPCへ確定する */

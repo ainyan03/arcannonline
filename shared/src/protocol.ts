@@ -79,6 +79,8 @@ export const MISSILE_COUNT = 6;
 export const MISSILE_DAMAGE = 24;
 /** 発射から必中までの時間 */
 export const MISSILE_TRAVEL_MS = 900;
+/** 1発ごとの発射時差 (連射の見た目。ダメージ到達も同じ時差で揃える) */
+export const MISSILE_STAGGER_MS = 80;
 /** ボムとしてのエネルギーコスト */
 export const MISSILE_BOMB_COST = 120;
 /** 1イベントに載るミサイル数の上限 (検証用) */
